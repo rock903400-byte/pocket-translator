@@ -8,6 +8,7 @@ import android.speech.tts.UtteranceProgressListener
 import android.util.Log
 import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 class EarphoneTtsManager(
     private val context: Context,
@@ -21,6 +22,11 @@ class EarphoneTtsManager(
     private var tts: TextToSpeech? = null
     private val isInitialized = AtomicBoolean(false)
     private var pendingSpeechRate = 1.15f
+
+    /** 尚未唸完的段落數（含正在唸的那一段）。 */
+    private val pending = AtomicInteger(0)
+
+    val pendingCount: Int get() = pending.get()
 
     init {
         tts = try {
@@ -50,10 +56,12 @@ class EarphoneTtsManager(
                     }
 
                     override fun onDone(utteranceId: String?) {
+                        decrementPending()
                         onSpeakingStateChanged(false)
                     }
 
                     override fun onError(utteranceId: String?) {
+                        decrementPending()
                         onSpeakingStateChanged(false)
                     }
                 })
@@ -114,14 +122,41 @@ class EarphoneTtsManager(
         if (!isInitialized.get() || text.isBlank()) return
 
         val queueMode = if (flushQueue) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD
+
+        // 舊版在 Bundle 與第 4 個參數各呼叫一次 currentTimeMillis()，
+        // 差 1ms 就變成兩個不同的 id，而 listener 收到的是第 4 個參數那個。
+        val utteranceId = "utterance_${System.nanoTime()}"
         val params = Bundle().apply {
-            putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, "utterance_${System.currentTimeMillis()}")
+            putString(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
         }
 
-        tts?.speak(text, queueMode, params, "utterance_${System.currentTimeMillis()}")
+        pending.incrementAndGet()
+        val result = tts?.speak(text, queueMode, params, utteranceId)
+        if (result != TextToSpeech.SUCCESS) {
+            decrementPending()
+        }
+    }
+
+    /**
+     * 串流口譯專用：佇列積太多就清空跳到最新的一句。
+     *
+     * 刻意不改動 [speak] 的語意 —— 這個類別與 Gemini Live / 高速 AI 兩個引擎共用。
+     */
+    fun speakStreaming(text: String) {
+        if (TtsQueuePolicy.shouldFlush(pending.get())) {
+            pending.set(0)
+            speak(text, flushQueue = true)
+        } else {
+            speak(text, flushQueue = false)
+        }
+    }
+
+    private fun decrementPending() {
+        pending.updateAndGet { if (it > 0) it - 1 else 0 }
     }
 
     fun stop() {
+        pending.set(0)
         if (isInitialized.get()) {
             tts?.stop()
         }

@@ -62,6 +62,12 @@ class LiveTranslationService : Service() {
         /** 沉澱計時器的心跳間隔 */
         private const val TICK_INTERVAL_MS = 250L
 
+        /** 通知列重建的最小間隔。句中定案後每秒可能有數次更新，不節流會很浪費。 */
+        private const val NOTIFICATION_THROTTLE_MS = 1200L
+
+        /** 外放播完後等喇叭餘音散去再恢復收音。 */
+        private const val ECHO_RESUME_DELAY_MS = 300L
+
         // 全域狀態流，讓 Activity 與 Service 雙向響應
         private val _isRunningFlow = MutableStateFlow(false)
         val isRunningFlow = _isRunningFlow.asStateFlow()
@@ -203,6 +209,22 @@ class LiveTranslationService : Service() {
                 }
                 if (_isRunningFlow.value && settings.engineType != EngineType.GEMINI_LIVE) {
                     _statusTextFlow.value = "正在背景聆聽外語對話... (關螢幕依然運作)"
+                }
+            }
+
+            // Google 原生模式沒有自己的 AudioRecord 可以靜音（isMutedByPlayback 在這個模式下是 no-op），
+            // 而 SpeechRecognizer 會確實聽到手機外放的譯文，進而幻聽、再翻、再唸，形成迴圈。
+            // 只在外放時暫停收音；耳機與聽筒漏音可忽略，暫停反而會漏掉真實語音。
+            if (settings.engineType == EngineType.BUILTIN &&
+                audioRouter?.activeTargetFlow?.value == AudioOutputTarget.SPEAKER
+            ) {
+                if (isSpeaking) {
+                    googleStreamingRecognizer?.pause()
+                } else {
+                    serviceScope.launch {
+                        delay(ECHO_RESUME_DELAY_MS)
+                        googleStreamingRecognizer?.resume()
+                    }
                 }
             }
         }
@@ -547,7 +569,8 @@ class LiveTranslationService : Service() {
 
             val target = audioRouter?.activeTargetFlow?.value ?: AudioOutputTarget.AUTO_HEADPHONES
             if (target != AudioOutputTarget.MUTE) {
-                ttsManager?.speak(translatedText)
+                // 串流版本：佇列積太多就跳到最新，避免愈落愈後面
+                ttsManager?.speakStreaming(translatedText)
             }
         }
     }
@@ -648,7 +671,17 @@ class LiveTranslationService : Service() {
             .build()
     }
 
+    /**
+     * 節流：createNotification 每次都要重建三個 PendingIntent 與整個 Notification，
+     * 句中定案後每秒可能觸發數次。通知列少更新一兩次沒有任何影響。
+     */
+    private var lastNotificationMs = 0L
+
     private fun updateNotification(content: String) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastNotificationMs < NOTIFICATION_THROTTLE_MS) return
+        lastNotificationMs = now
+
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
         manager.notify(PocketTranslatorApp.NOTIFICATION_ID, createNotification(content))
     }
