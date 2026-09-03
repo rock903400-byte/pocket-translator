@@ -18,6 +18,7 @@ class AppSettings(context: Context) {
         private const val KEY_TARGET_LANG_INDEX = "target_lang_index"
         private const val KEY_MODE = "translation_mode"
         private const val KEY_GEMINI_LIVE_VOICE = "gemini_live_voice"
+        private const val KEY_GEMINI_MODEL = "gemini_model_name"
         private const val KEY_AUDIO_OUTPUT = "audio_output_preference"
     }
 
@@ -35,6 +36,10 @@ class AppSettings(context: Context) {
     var geminiLiveVoice: String
         get() = prefs.getString(KEY_GEMINI_LIVE_VOICE, "Puck") ?: "Puck"
         set(value) = prefs.edit().putString(KEY_GEMINI_LIVE_VOICE, value).apply()
+
+    var geminiModelName: String
+        get() = prefs.getString(KEY_GEMINI_MODEL, "gemini-3.5-flash") ?: "gemini-3.5-flash"
+        set(value) = prefs.edit().putString(KEY_GEMINI_MODEL, value.trim()).apply()
 
     var engineType: EngineType
         get() {

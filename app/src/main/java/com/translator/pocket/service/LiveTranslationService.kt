@@ -102,7 +102,8 @@ class LiveTranslationService : Service() {
         // 初始化翻譯引擎
         cloudEngine = CloudAiEngine(
             groqApiKeyProvider = { settings.groqApiKey },
-            geminiApiKeyProvider = { settings.geminiApiKey }
+            geminiApiKeyProvider = { settings.geminiApiKey },
+            geminiModelProvider = { settings.geminiModelName }
         )
         builtinEngine = BuiltinEngine(this)
 
@@ -110,6 +111,7 @@ class LiveTranslationService : Service() {
         liveAudioPlayer = LiveAudioTrackPlayer()
         geminiLiveEngine = GeminiLiveEngine(
             apiKeyProvider = { settings.geminiApiKey },
+            modelNameProvider = { settings.geminiModelName },
             voiceName = settings.geminiLiveVoice,
             onAudioChunkReceived = { pcm24k ->
                 val target = audioRouter?.activeTargetFlow?.value ?: AudioOutputTarget.AUTO_HEADPHONES

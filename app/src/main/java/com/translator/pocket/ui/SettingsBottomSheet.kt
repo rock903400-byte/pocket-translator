@@ -43,6 +43,7 @@ class SettingsBottomSheet(
         }
 
         binding.etGeminiApiKey.setText(settings.geminiApiKey)
+        binding.etGeminiModel.setText(settings.geminiModelName)
         binding.etGroqApiKey.setText(settings.groqApiKey)
 
         // 初始可見性
@@ -84,6 +85,8 @@ class SettingsBottomSheet(
             }
             settings.engineType = selectedEngine
             settings.geminiApiKey = binding.etGeminiApiKey.text.toString().trim()
+            val modelName = binding.etGeminiModel.text.toString().trim().ifEmpty { "gemini-3.5-flash" }
+            settings.geminiModelName = modelName
             settings.groqApiKey = binding.etGroqApiKey.text.toString().trim()
 
             val speed = 1.0f + (binding.sbTtsSpeed.progress * 0.05f)

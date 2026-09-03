@@ -26,11 +26,13 @@
     <!-- Settings Dialog -->
     <string name="settings_title">翻譯與硬體設定</string>
     <string name="engine_type_title">翻譯核心選擇</string>
-    <string name="engine_gemini_live">Gemini Live 真人同步口譯 (頂級音訊串流)</string>
+    <string name="engine_gemini_live">Gemini 3.5 Live Translate (Google 官方最新真人雙向口譯)</string>
     <string name="engine_cloud">高速 AI API (Groq 0.5s 極速輕量模式)</string>
     <string name="engine_builtin">免費內建模式 (Google 語音與翻譯 - 免金鑰)</string>
     <string name="gemini_api_key_label">Gemini API Key (Gemini Live 必填)</string>
     <string name="gemini_api_key_hint">貼上 Gemini 金鑰 (AQ. 或 AIza 開頭皆可)</string>
+    <string name="gemini_model_label">Gemini 模型名稱 (預設: Gemini 3.5 Live Translate)</string>
+    <string name="gemini_model_hint">gemini-3.5-flash</string>
     <string name="groq_api_key_label">Groq API Key (Groq 模式必填)</string>
     <string name="groq_api_key_hint">gsk_...</string>
     <string name="vad_sensitivity_label">語音偵測靈敏度 (VAD)</string>

@@ -15,7 +15,8 @@ import java.util.concurrent.TimeUnit
 
 class CloudAiEngine(
     private val groqApiKeyProvider: () -> String,
-    private val geminiApiKeyProvider: () -> String
+    private val geminiApiKeyProvider: () -> String,
+    private val geminiModelProvider: () -> String = { "gemini-3.5-flash" }
 ) : ITranslationEngine {
 
     companion object {
@@ -86,7 +87,12 @@ class CloudAiEngine(
             .addFormDataPart("response_format", "json")
             .apply {
                 if (sourceLangCode.isNotEmpty() && sourceLangCode != "auto") {
-                    addFormDataPart("language", sourceLangCode)
+                    val whisperLang = when {
+                        sourceLangCode.startsWith("zh", ignoreCase = true) -> "zh"
+                        sourceLangCode.contains("-") -> sourceLangCode.split("-")[0]
+                        else -> sourceLangCode
+                    }
+                    addFormDataPart("language", whisperLang)
                 }
             }
             .build()
@@ -266,8 +272,12 @@ class CloudAiEngine(
             })
         }
 
+        val rawModel = geminiModelProvider().trim().ifEmpty { "gemini-3.5-flash" }
+        val modelClean = rawModel.removePrefix("models/")
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelClean:generateContent"
+
         val request = Request.Builder()
-            .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$apiKey")
+            .url(url)
             .addHeader("x-goog-api-key", apiKey)
             .post(payload.toString().toRequestBody(MEDIA_TYPE_JSON))
             .build()

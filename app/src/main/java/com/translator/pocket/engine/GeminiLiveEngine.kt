@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class GeminiLiveEngine(
     private val apiKeyProvider: () -> String,
+    private val modelNameProvider: () -> String = { "gemini-3.5-flash" },
     private val voiceName: String = "Puck",
     private val onAudioChunkReceived: (ByteArray) -> Unit,
     private val onTranscriptReceived: (originalText: String, translatedText: String) -> Unit,
@@ -31,7 +32,6 @@ class GeminiLiveEngine(
 ) {
     companion object {
         private const val TAG = "GeminiLiveEngine"
-        private const val MODEL_NAME = "models/gemini-2.0-flash-exp"
         private const val WS_HOST = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
     }
 
@@ -109,9 +109,12 @@ class GeminiLiveEngine(
     private fun sendSetupMessage(ws: WebSocket) {
         val systemPrompt = "You are an elite real-time simultaneous interpreter. When you receive speech audio in any language, translate it instantaneously and speak it out in fluent, natural, professional Traditional Chinese (Taiwan, 繁體中文). Embody a calm, articulate human interpreter. Never output conversational pleasantries, greetings, or meta commentary. Only speak the exact spoken translation in real time."
 
+        val rawModel = modelNameProvider().trim().ifEmpty { "gemini-3.5-flash" }
+        val finalModel = if (rawModel.startsWith("models/")) rawModel else "models/$rawModel"
+
         val setupJson = JSONObject().apply {
             put("setup", JSONObject().apply {
-                put("model", MODEL_NAME)
+                put("model", finalModel)
                 put("generationConfig", JSONObject().apply {
                     put("responseModalities", JSONArray().apply {
                         put("AUDIO")
