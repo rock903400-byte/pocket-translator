@@ -31,12 +31,10 @@
 ## 📱 下載與安裝指南
 
 ### 方法一：直接線上下載編譯好的 APK（最推薦）
-本專案已整合 **GitHub Actions 自動編譯工作流程**：
-1. 進入本 GitHub 儲存庫頁面。
-2. 點擊頂部 **「Actions」** 分頁。
-3. 點擊最新的 **「Build Android APK」** 執行紀錄。
-4. 在最下方的 **「Artifacts」** 區塊點擊下載 `PocketTranslator-Debug-APK`。
-5. 解壓縮後將 `.apk` 傳送至手機點擊安裝即可！
+本專案已整合 **GitHub Actions 自動編譯發布**：
+1. 進入最新發布頁面：[GitHub Releases 最新版本](https://github.com/rock903400-byte/pocket-translator/releases/latest)。
+2. 下載附件中的 **`PocketTranslator-Debug.apk`** 直接在手機上安裝即可！
+3. **支援一鍵直接覆蓋升級**：自 v1.2.1 起已配置專屬永久數位簽章，未來下載任何新版本均可直接點擊覆蓋升級，自動保留歷史設定與 API Key！
 
 ### 方法二：本機自行編譯
 若本機已安裝 Android Studio 或 Java 17：
