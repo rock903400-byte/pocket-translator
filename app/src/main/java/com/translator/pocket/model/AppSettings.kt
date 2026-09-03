@@ -9,36 +9,15 @@ class AppSettings(context: Context) {
         context.getSharedPreferences("pocket_translator_prefs", Context.MODE_PRIVATE)
 
     companion object {
-        private const val KEY_ENGINE_TYPE = "engine_type"
-        private const val KEY_GROQ_API_KEY = "groq_api_key"
         private const val KEY_GEMINI_API_KEY = "gemini_api_key"
         private const val KEY_TTS_SPEED = "tts_speed"
-        private const val KEY_VAD_SENSITIVITY = "vad_sensitivity"
         private const val KEY_SOURCE_LANG_INDEX = "source_lang_index"
         private const val KEY_TARGET_LANG_INDEX = "target_lang_index"
-        private const val KEY_MODE = "translation_mode"
-        private const val KEY_GEMINI_LIVE_VOICE = "gemini_live_voice"
-        private const val KEY_GEMINI_MODEL = "gemini_model_name"
         private const val KEY_GEMINI_LIVE_MODEL = "gemini_live_model_name"
-
-        // Live API 專用模型 (只能走 WebSocket，不能用 REST generateContent)
-        const val DEFAULT_GEMINI_LIVE_MODEL = "gemini-3.5-live-translate-preview"
-
-        // REST generateContent 專用模型 (高速 AI 模式的 Gemini 備援)
-        const val DEFAULT_GEMINI_REST_MODEL = "gemini-3.5-flash"
         private const val KEY_AUDIO_OUTPUT = "audio_output_preference"
-        private const val KEY_PREFER_OFFLINE_RECOGNITION = "prefer_offline_recognition"
-    }
 
-    /**
-     * 是否優先使用裝置上的離線語音辨識。
-     * 語言包在的裝置延遲大勝，不在的會直接回報語言不支援 ——
-     * GoogleStreamingRecognizer 會自動關掉這個偏好重試一次，所以開著是安全的，
-     * 但預設關閉：多數裝置的中日韓離線包品質明顯較差。
-     */
-    var preferOfflineRecognition: Boolean
-        get() = prefs.getBoolean(KEY_PREFER_OFFLINE_RECOGNITION, false)
-        set(value) = prefs.edit().putBoolean(KEY_PREFER_OFFLINE_RECOGNITION, value).apply()
+        const val DEFAULT_GEMINI_LIVE_MODEL = "gemini-3.5-live-translate-preview"
+    }
 
     var audioOutputPreference: AudioOutputTarget
         get() {
@@ -51,11 +30,6 @@ class AppSettings(context: Context) {
         }
         set(value) = prefs.edit().putString(KEY_AUDIO_OUTPUT, value.name).apply()
 
-    var geminiLiveVoice: String
-        get() = prefs.getString(KEY_GEMINI_LIVE_VOICE, "Puck") ?: "Puck"
-        set(value) = prefs.edit().putString(KEY_GEMINI_LIVE_VOICE, value).apply()
-
-    /** Gemini Live (WebSocket 雙向語音) 使用的模型 */
     var geminiLiveModelName: String
         get() = prefs.getString(KEY_GEMINI_LIVE_MODEL, DEFAULT_GEMINI_LIVE_MODEL)
             ?.trim()?.ifEmpty { DEFAULT_GEMINI_LIVE_MODEL } ?: DEFAULT_GEMINI_LIVE_MODEL
@@ -63,68 +37,22 @@ class AppSettings(context: Context) {
             .putString(KEY_GEMINI_LIVE_MODEL, value.trim().ifEmpty { DEFAULT_GEMINI_LIVE_MODEL })
             .apply()
 
-    /**
-     * Gemini REST (generateContent) 使用的模型。
-     * 舊版曾把 Live 專用模型寫進這個欄位，會讓 REST 呼叫直接 404，這裡自動修正回一般模型。
-     */
-    var geminiModelName: String
-        get() {
-            val stored = prefs.getString(KEY_GEMINI_MODEL, DEFAULT_GEMINI_REST_MODEL)?.trim().orEmpty()
-            val isLiveOnly = stored.contains("live", ignoreCase = true) ||
-                stored.contains("transcribe", ignoreCase = true)
-            return if (stored.isEmpty() || isLiveOnly) DEFAULT_GEMINI_REST_MODEL else stored
-        }
-        set(value) = prefs.edit()
-            .putString(KEY_GEMINI_MODEL, value.trim().ifEmpty { DEFAULT_GEMINI_REST_MODEL })
-            .apply()
-
-    var engineType: EngineType
-        get() {
-            val name = prefs.getString(KEY_ENGINE_TYPE, EngineType.CLOUD_AI.name)
-            return try {
-                EngineType.valueOf(name ?: EngineType.CLOUD_AI.name)
-            } catch (e: Exception) {
-                EngineType.CLOUD_AI
-            }
-        }
-        set(value) = prefs.edit().putString(KEY_ENGINE_TYPE, value.name).apply()
-
-    var groqApiKey: String
-        get() = prefs.getString(KEY_GROQ_API_KEY, "") ?: ""
-        set(value) = prefs.edit().putString(KEY_GROQ_API_KEY, value.trim()).apply()
-
     var geminiApiKey: String
         get() = prefs.getString(KEY_GEMINI_API_KEY, "") ?: ""
         set(value) = prefs.edit().putString(KEY_GEMINI_API_KEY, value.trim()).apply()
 
     var ttsSpeed: Float
-        get() = prefs.getFloat(KEY_TTS_SPEED, 1.15f) // 預設 1.15x 微快，確保耳機能跟上口譯
+        get() = prefs.getFloat(KEY_TTS_SPEED, 1.15f)
         set(value) = prefs.edit().putFloat(KEY_TTS_SPEED, value).apply()
 
-    var vadSensitivity: Int // 1 (靈敏) ~ 10 (遲鈍)
-        get() = prefs.getInt(KEY_VAD_SENSITIVITY, 5)
-        set(value) = prefs.edit().putInt(KEY_VAD_SENSITIVITY, value).apply()
-
     var sourceLangIndex: Int
-        get() = prefs.getInt(KEY_SOURCE_LANG_INDEX, 0) // 預設日語
+        get() = prefs.getInt(KEY_SOURCE_LANG_INDEX, 0)
         set(value) = prefs.edit().putInt(KEY_SOURCE_LANG_INDEX, value).apply()
 
     var targetLangIndex: Int
-        get() = prefs.getInt(KEY_TARGET_LANG_INDEX, 3) // 預設繁體中文 (supportedLanguages[3])
+        get() = prefs.getInt(KEY_TARGET_LANG_INDEX, 3)
         set(value) = prefs.edit().putInt(KEY_TARGET_LANG_INDEX, value).apply()
 
-    var translationMode: TranslationMode
-        get() {
-            val name = prefs.getString(KEY_MODE, TranslationMode.ONE_WAY.name)
-            return try {
-                TranslationMode.valueOf(name ?: TranslationMode.ONE_WAY.name)
-            } catch (e: Exception) {
-                TranslationMode.ONE_WAY
-            }
-        }
-        set(value) = prefs.edit().putString(KEY_MODE, value.name).apply()
-
-    // 常用語言清單
     val supportedLanguages = listOf(
         LanguageOption("ja", "日語 (Japanese)", "ja"),
         LanguageOption("en", "英語 (English)", "en"),

@@ -1,0 +1,6 @@
+## 本機簽章設定（勿提交 local.properties）
+## 複製此檔為 local.properties 並填入真實密碼，或改用環境變數 POCKET_STORE_PASSWORD / POCKET_KEY_PASSWORD
+pocket.storePassword=pocket_translator_key_2026
+pocket.keyAlias=pocket_key
+pocket.keyPassword=pocket_translator_key_2026
+sdk.dir=C\:\\Users\\user\\AppData\\Local\\Android\\Sdk

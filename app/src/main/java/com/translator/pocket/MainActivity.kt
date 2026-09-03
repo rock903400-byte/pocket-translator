@@ -5,6 +5,9 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -26,15 +29,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
-import android.media.AudioDeviceCallback
-import android.media.AudioDeviceInfo
-import android.media.AudioManager
 import com.translator.pocket.databinding.ActivityMainBinding
 import com.translator.pocket.model.AppSettings
 import com.translator.pocket.model.AudioOutputTarget
-import com.translator.pocket.model.EngineType
 import com.translator.pocket.model.InterimSubtitle
-import com.translator.pocket.model.TranslationMode
 import com.translator.pocket.service.LiveTranslationService
 import com.translator.pocket.ui.ChatAdapter
 import com.translator.pocket.ui.SettingsBottomSheet
@@ -74,7 +72,6 @@ class MainActivity : AppCompatActivity() {
 
         settings = AppSettings(this)
 
-        // 動態偵測系統狀態列與導航列安全邊界，徹底防止被電池/訊號/挖孔遮擋
         ViewCompat.setOnApplyWindowInsetsListener(binding.rootLayout) { _, insets ->
             val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
             val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
@@ -95,7 +92,6 @@ class MainActivity : AppCompatActivity() {
 
         setupRecyclerView()
         setupLanguageSpinners()
-        setupModeToggle()
         setupAudioOutputToggle()
         setupButtons()
         setupStealthMode()
@@ -143,74 +139,12 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
 
-        // 語言交換按鈕
         binding.btnSwapLang.setOnClickListener {
             val src = binding.spnSourceLang.selectedItemPosition
             val tgt = binding.spnTargetLang.selectedItemPosition
             binding.spnSourceLang.setSelection(tgt)
             binding.spnTargetLang.setSelection(src)
         }
-    }
-
-    private fun setupModeToggle() {
-        when (settings.translationMode) {
-            TranslationMode.ONE_WAY -> binding.toggleMode.check(R.id.btnModeOneWay)
-            TranslationMode.TWO_WAY -> binding.toggleMode.check(R.id.btnModeTwoWay)
-        }
-        updateConversationControlsVisibility()
-
-        binding.toggleMode.addOnButtonCheckedListener { _, checkedId, isChecked ->
-            if (isChecked) {
-                if (checkedId == R.id.btnModeOneWay) {
-                    settings.translationMode = TranslationMode.ONE_WAY
-                } else {
-                    settings.translationMode = TranslationMode.TWO_WAY
-                }
-                updateConversationControlsVisibility()
-            }
-        }
-    }
-
-    /**
-     * 對話模式的輪次按鈕。只在 Google 原生模式提供 —— Gemini Live / 高速 AI
-     * 兩個引擎的雙向對話走各自既有的機制，本次重構範圍不動它們。
-     */
-    private fun setupConversationControls() {
-        val srcLang = settings.supportedLanguages.getOrElse(settings.sourceLangIndex) { settings.supportedLanguages[0] }
-        val tgtLang = settings.supportedLanguages.getOrElse(settings.targetLangIndex) { settings.supportedLanguages[3] }
-
-        binding.btnTurnA.text = "🎤 ${srcLang.displayName}"
-        binding.btnTurnB.text = "🎤 ${tgtLang.displayName}"
-
-        binding.btnTurnA.setOnClickListener { setSpeakingTurn(0) }
-        binding.btnTurnB.setOnClickListener { setSpeakingTurn(1) }
-
-        updateTurnButtonStyles(0)
-    }
-
-    private fun setSpeakingTurn(index: Int) {
-        updateTurnButtonStyles(index)
-        val intent = Intent(this, LiveTranslationService::class.java).apply {
-            action = LiveTranslationService.ACTION_SET_TURN
-            putExtra(LiveTranslationService.EXTRA_TURN_INDEX, index)
-        }
-        startService(intent)
-    }
-
-    private fun updateTurnButtonStyles(activeIndex: Int) {
-        binding.btnTurnA.setBackgroundResource(
-            if (activeIndex == 0) R.drawable.bg_button_primary else R.drawable.bg_card
-        )
-        binding.btnTurnB.setBackgroundResource(
-            if (activeIndex == 1) R.drawable.bg_button_primary else R.drawable.bg_card
-        )
-    }
-
-    private fun updateConversationControlsVisibility() {
-        val show = settings.translationMode == TranslationMode.TWO_WAY &&
-            settings.engineType == EngineType.BUILTIN
-        binding.layoutConversationControls.visibility = if (show) View.VISIBLE else View.GONE
-        if (show) setupConversationControls()
     }
 
     private fun setupAudioOutputToggle() {
@@ -239,10 +173,10 @@ class MainActivity : AppCompatActivity() {
         val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
         val hasHeadphones = devices.any {
             it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
-            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
-            it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
-            it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
-            it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+                it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+                it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+                it.type == AudioDeviceInfo.TYPE_USB_HEADSET
         }
         runOnUiThread {
             updateHeadphonesUi(hasHeadphones)
@@ -260,7 +194,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupButtons() {
-        // 開始 / 停止切換
         binding.btnToggleTranslation.setOnClickListener {
             if (LiveTranslationService.isRunningFlow.value) {
                 stopTranslationService()
@@ -269,37 +202,28 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 清空紀錄
         binding.btnClear.setOnClickListener {
             chatAdapter.clearMessages()
             binding.layoutEmptyState.visibility = View.VISIBLE
             binding.layoutLiveCaption.visibility = View.GONE
         }
 
-        // 快捷設定 API Key (大按鈕)
         binding.btnQuickApiKey.setOnClickListener {
-            val sheet = SettingsBottomSheet {
-                updateConversationControlsVisibility()
-            }
+            val sheet = SettingsBottomSheet {}
             sheet.show(supportFragmentManager, "SettingsBottomSheet")
         }
 
-        // 設定選單
         binding.btnSettings.setOnClickListener {
-            val sheet = SettingsBottomSheet {
-                updateConversationControlsVisibility()
-            }
+            val sheet = SettingsBottomSheet {}
             sheet.show(supportFragmentManager, "SettingsBottomSheet")
         }
     }
 
     private fun setupStealthMode() {
-        // 進入 AMOLED 全黑省電防誤觸模式
         binding.btnStealthMode.setOnClickListener {
             binding.stealthOverlay.visibility = View.VISIBLE
         }
 
-        // 雙擊全黑遮罩退出省電模式
         val gestureDetector = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
             override fun onDoubleTap(e: MotionEvent): Boolean {
                 binding.stealthOverlay.visibility = View.GONE
@@ -314,13 +238,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startTranslationService() {
-        // 檢查金鑰設定，若未填寫則彈出導引對話框，絕不默默卡死
-        if (settings.engineType == EngineType.GEMINI_LIVE && settings.geminiApiKey.isBlank()) {
-            showMissingKeyDialog("Gemini Live 真人同步口譯")
-            return
-        }
-        if (settings.engineType == EngineType.CLOUD_AI && settings.groqApiKey.isBlank() && settings.geminiApiKey.isBlank()) {
-            showMissingKeyDialog("極速 AI 同聲傳譯")
+        if (settings.geminiApiKey.isBlank()) {
+            showMissingKeyDialog()
             return
         }
 
@@ -334,18 +253,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun showMissingKeyDialog(engineName: String) {
+    private fun showMissingKeyDialog() {
         com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
-            .setTitle("💡 尚未填入 API Key")
-            .setMessage("您目前選擇了「$engineName」，需要 API Key 才能連線雲端 AI 模型。\n\n• 若您有 Key：請前往設定貼上\n• 若您無 Key：可一鍵切換為免費免金鑰模式")
+            .setTitle("💡 尚未填入 Gemini API Key")
+            .setMessage("Gemini Live 真人同步口譯需要 API Key 才能連線。\n\n請前往設定貼上你的 Gemini API Key。")
             .setPositiveButton("前往設定填寫") { _, _ ->
                 val sheet = SettingsBottomSheet {}
                 sheet.show(supportFragmentManager, "SettingsBottomSheet")
-            }
-            .setNeutralButton("一鍵切換免金鑰模式") { _, _ ->
-                settings.engineType = EngineType.BUILTIN
-                Toast.makeText(this, "已切換為免費免金鑰模式！", Toast.LENGTH_SHORT).show()
-                startTranslationService()
             }
             .setNegativeButton("取消", null)
             .show()
@@ -374,7 +288,6 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     LiveTranslationService.messageFlow.collect { msg ->
                         val wasAtBottom = isAtBottom()
-                        // upsert 而非 add：同一個 id 再次送來時就地更新（例如繁中譯文的線上升級）
                         chatAdapter.upsertMessage(msg)
                         binding.layoutEmptyState.visibility = View.GONE
                         if (wasAtBottom) scrollToBottom()
@@ -389,7 +302,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /** 顯示進行中、尚未定案的字幕。null 代表目前沒有語句在進行。 */
     private fun renderLiveCaption(interim: InterimSubtitle?) {
         if (interim == null) {
             binding.layoutLiveCaption.visibility = View.GONE
@@ -400,10 +312,6 @@ class MainActivity : AppCompatActivity() {
         binding.tvLiveTarget.text = interim.translatedText
     }
 
-    /**
-     * 使用者已經捲上去看歷史時就不要硬把畫面拉回底部。
-     * 落後太多時直接跳，不做動畫 —— 動畫在連續新增時會排隊，看起來像卡住。
-     */
     private fun isAtBottom(): Boolean {
         val lm = binding.rvMessages.layoutManager as? LinearLayoutManager ?: return true
         return lm.findLastVisibleItemPosition() >= chatAdapter.itemCount - 2
@@ -427,17 +335,12 @@ class MainActivity : AppCompatActivity() {
             binding.spnSourceLang.isEnabled = false
             binding.spnTargetLang.isEnabled = false
             binding.btnSwapLang.isEnabled = false
-            binding.btnModeOneWay.isEnabled = false
-            binding.btnModeTwoWay.isEnabled = false
-            updateConversationControlsVisibility()
         } else {
             binding.btnToggleTranslation.text = getString(R.string.btn_start_translation)
             binding.btnToggleTranslation.setBackgroundResource(R.drawable.bg_button_primary)
             binding.spnSourceLang.isEnabled = true
             binding.spnTargetLang.isEnabled = true
             binding.btnSwapLang.isEnabled = true
-            binding.btnModeOneWay.isEnabled = true
-            binding.btnModeTwoWay.isEnabled = true
             binding.layoutLiveCaption.visibility = View.GONE
         }
     }
@@ -463,9 +366,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    /**
-     * 檢查是否已將 App 加入電池最佳化白名單（確保鎖屏放口袋完全不被休眠砍掉）
-     */
     @SuppressLint("BatteryLife")
     private fun checkBatteryOptimization() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager

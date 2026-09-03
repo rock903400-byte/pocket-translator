@@ -8,25 +8,26 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
 
-class AudioStreamRecorder(
-    private val vadSegmenter: VadSegmenter
-) {
+class AudioStreamRecorder {
+
     companion object {
         private const val TAG = "AudioStreamRecorder"
         const val SAMPLE_RATE = 16000
         const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
-        private const val FRAME_SIZE_BYTES = 640 // 20ms at 16kHz 16-bit mono (320 samples * 2 bytes)
+        private const val FRAME_SIZE_BYTES = 640
     }
 
     private var audioRecord: AudioRecord? = null
     private val isRecording = AtomicBoolean(false)
     private var recordingJob: Job? = null
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     var onRawFrameCaptured: ((ByteArray, Int) -> Unit)? = null
     var onAudioLevelChanged: ((Double) -> Unit)? = null
@@ -45,7 +46,6 @@ class AudioStreamRecorder(
         val bufferSize = maxOf(minBufSize, FRAME_SIZE_BYTES * 4)
 
         try {
-            // 使用相容性最廣的通用 MIC 音源，杜絕被部分手機驅動強制靜音
             audioRecord = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
                 SAMPLE_RATE,
@@ -62,10 +62,7 @@ class AudioStreamRecorder(
 
             audioRecord?.startRecording()
             isRecording.set(true)
-            vadSegmenter.reset()
-            vadSegmenter.onRmsCalculated = { rms ->
-                onAudioLevelChanged?.invoke(rms)
-            }
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
             recordingJob = scope.launch {
                 val buffer = ByteArray(FRAME_SIZE_BYTES)
@@ -74,10 +71,11 @@ class AudioStreamRecorder(
                 while (isActive && isRecording.get()) {
                     val bytesRead = audioRecord?.read(buffer, 0, buffer.size) ?: -1
                     if (bytesRead > 0) {
-                        // 若喇叭正在外放朗讀翻譯語音，暫停收集麥克風音訊，徹底杜絕自己錄自己
                         if (!isMutedByPlayback.get()) {
-                            onRawFrameCaptured?.invoke(buffer, bytesRead)
-                            vadSegmenter.processFrame(buffer, bytesRead)
+                            val copy = buffer.copyOf(bytesRead)
+                            onRawFrameCaptured?.invoke(copy, bytesRead)
+                            val rms = calculateRms(copy, bytesRead)
+                            onAudioLevelChanged?.invoke(rms)
                         }
                     } else if (bytesRead < 0) {
                         Log.e(TAG, "AudioRecord 讀取錯誤碼: $bytesRead")
@@ -98,6 +96,7 @@ class AudioStreamRecorder(
         isRecording.set(false)
         recordingJob?.cancel()
         recordingJob = null
+        scope.cancel()
 
         try {
             if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
@@ -120,4 +119,17 @@ class AudioStreamRecorder(
     }
 
     fun isRunning(): Boolean = isRecording.get()
+
+    private fun calculateRms(buffer: ByteArray, length: Int): Double {
+        var sum = 0.0
+        val sampleCount = length / 2
+        if (sampleCount == 0) return 0.0
+        for (i in 0 until length - 1 step 2) {
+            val low = buffer[i].toInt() and 0xFF
+            val high = buffer[i + 1].toInt()
+            val sample = (high shl 8) or low
+            sum += sample * sample
+        }
+        return kotlin.math.sqrt(sum / sampleCount)
+    }
 }

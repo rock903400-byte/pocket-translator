@@ -5,6 +5,8 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -80,7 +82,7 @@ class GeminiLiveEngine(
     /** 只有在收到 setupComplete 之後才算真的可以送音訊 */
     val isConnectionReady: Boolean get() = isReady.get()
 
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var reconnectJob: Job? = null
     private var flushJob: Job? = null
     private var reconnectAttempts = 0
@@ -420,6 +422,8 @@ class GeminiLiveEngine(
         } catch (e: Exception) {
             // ignore
         }
+        scope.cancel()
+        scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         onConnectionStateChanged(false, "Gemini Live 已關閉")
     }
 }

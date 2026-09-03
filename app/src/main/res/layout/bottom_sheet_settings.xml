@@ -21,48 +21,9 @@
         android:layout_marginBottom="16dp"
         android:background="@color/card_stroke" />
 
-    <!-- 翻譯引擎選擇 -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="@string/engine_type_title"
-        android:textColor="@color/text_secondary"
-        android:textSize="14sp" />
-
-    <RadioGroup
-        android:id="@+id/rgEngine"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="6dp">
-
-        <RadioButton
-            android:id="@+id/rbGeminiLive"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/engine_gemini_live"
-            android:textColor="@color/text_primary" />
-
-        <RadioButton
-            android:id="@+id/rbCloudEngine"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/engine_cloud"
-            android:textColor="@color/text_primary" />
-
-        <RadioButton
-            android:id="@+id/rbBuiltinEngine"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="@string/engine_builtin"
-            android:textColor="@color/text_primary" />
-    </RadioGroup>
-
-    <!-- Gemini Live API Key Input -->
     <LinearLayout
-        android:id="@+id/layoutGeminiKey"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
         android:orientation="vertical">
 
         <TextView
@@ -119,80 +80,6 @@
             android:textSize="14sp" />
     </LinearLayout>
 
-    <!-- Groq API Key Input -->
-    <LinearLayout
-        android:id="@+id/layoutGroqKey"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:orientation="vertical">
-
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/groq_api_key_label"
-            android:textColor="@color/text_secondary"
-            android:textSize="13sp" />
-
-        <EditText
-            android:id="@+id/etGroqApiKey"
-            android:layout_width="match_parent"
-            android:layout_height="48dp"
-            android:layout_marginTop="4dp"
-            android:background="@drawable/bg_card"
-            android:hint="@string/groq_api_key_hint"
-            android:inputType="textPassword"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:textColor="@color/text_primary"
-            android:textColorHint="@color/text_muted"
-            android:textSize="14sp" />
-
-        <TextView
-            android:id="@+id/btnGetGroqKey"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="🔗 點此免費取得 Groq API Key (14,400次/天 免費額度)"
-            android:textColor="@color/primary_accent"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-    </LinearLayout>
-
-    <!-- TTS Speech Rate -->
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="16dp"
-        android:text="@string/tts_speed_label"
-        android:textColor="@color/text_secondary"
-        android:textSize="13sp" />
-
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
-        <SeekBar
-            android:id="@+id/sbTtsSpeed"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:max="10"
-            android:progress="2" />
-
-        <TextView
-            android:id="@+id/tvTtsSpeedValue"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="8dp"
-            android:text="1.15x"
-            android:textColor="@color/text_primary"
-            android:textSize="14sp" />
-    </LinearLayout>
-
-    <!-- Save Button -->
     <Button
         android:id="@+id/btnSaveSettings"
         android:layout_width="match_parent"

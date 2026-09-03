@@ -9,10 +9,14 @@ android {
 
     signingConfigs {
         create("releaseSigning") {
+            val localProps = java.util.Properties().apply {
+                val f = file("${rootDir}/local.properties")
+                if (f.exists()) f.inputStream().use { load(it) }
+            }
             storeFile = file("${rootDir}/keystore/pocket_translator.jks")
-            storePassword = "pocket_translator_key_2026"
-            keyAlias = "pocket_key"
-            keyPassword = "pocket_translator_key_2026"
+            storePassword = localProps.getProperty("pocket.storePassword") ?: System.getenv("POCKET_STORE_PASSWORD") ?: "pocket_translator_key_2026"
+            keyAlias = localProps.getProperty("pocket.keyAlias") ?: System.getenv("POCKET_KEY_ALIAS") ?: "pocket_key"
+            keyPassword = localProps.getProperty("pocket.keyPassword") ?: System.getenv("POCKET_KEY_PASSWORD") ?: (localProps.getProperty("pocket.storePassword") ?: System.getenv("POCKET_STORE_PASSWORD") ?: "pocket_translator_key_2026")
         }
     }
 
@@ -70,12 +74,9 @@ dependencies {
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.service)
 
-    // Networking (for Groq / Gemini API calls)
+    // Networking (Gemini Live WebSocket)
     implementation(libs.okhttp)
     implementation(libs.okhttp.logging)
-
-    // Google ML Kit Translate (Offline / Built-in engine support)
-    implementation("com.google.mlkit:translate:17.0.3")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
