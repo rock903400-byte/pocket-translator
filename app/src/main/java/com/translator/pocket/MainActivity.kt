@@ -30,6 +30,7 @@ import android.media.AudioManager
 import com.translator.pocket.databinding.ActivityMainBinding
 import com.translator.pocket.model.AppSettings
 import com.translator.pocket.model.AudioOutputTarget
+import com.translator.pocket.model.EngineType
 import com.translator.pocket.model.TranslationMode
 import com.translator.pocket.service.LiveTranslationService
 import com.translator.pocket.ui.ChatAdapter

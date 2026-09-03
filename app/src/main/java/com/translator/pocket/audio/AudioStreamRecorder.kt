@@ -112,13 +112,6 @@ class AudioStreamRecorder(
 
     private fun release() {
         try {
-            echoCanceler?.release()
-        } catch (e: Exception) {
-            // ignore
-        }
-        echoCanceler = null
-
-        try {
             audioRecord?.release()
         } catch (e: Exception) {
             Log.w(TAG, "釋放 AudioRecord 警告", e)
