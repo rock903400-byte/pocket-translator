@@ -29,8 +29,8 @@ class AudioStreamRecorder(
     private val scope = CoroutineScope(Dispatchers.IO)
 
     var onRawFrameCaptured: ((ByteArray, Int) -> Unit)? = null
+    var onAudioLevelChanged: ((Double) -> Unit)? = null
     val isMutedByPlayback = AtomicBoolean(false)
-    private var echoCanceler: android.media.audiofx.AcousticEchoCanceler? = null
 
     @SuppressLint("MissingPermission")
     fun startRecording(): Boolean {
@@ -45,8 +45,9 @@ class AudioStreamRecorder(
         val bufferSize = maxOf(minBufSize, FRAME_SIZE_BYTES * 4)
 
         try {
+            // 使用相容性最廣的通用 MIC 音源，杜絕被部分手機驅動強制靜音
             audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.VOICE_RECOGNITION, // 優先使用語音辨識降噪音訊源
+                MediaRecorder.AudioSource.MIC,
                 SAMPLE_RATE,
                 CHANNEL_CONFIG,
                 AUDIO_FORMAT,
@@ -59,20 +60,12 @@ class AudioStreamRecorder(
                 return false
             }
 
-            // 嘗試開啟系統硬體迴音消除器 (AEC) 防止喇叭回授
-            if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
-                try {
-                    echoCanceler = android.media.audiofx.AcousticEchoCanceler.create(audioRecord!!.audioSessionId)
-                    echoCanceler?.enabled = true
-                    Log.d(TAG, "硬體級 AcousticEchoCanceler 啟動成功")
-                } catch (e: Exception) {
-                    Log.w(TAG, "啟動硬體 AEC 失敗，將依靠軟體自靜音門控", e)
-                }
-            }
-
             audioRecord?.startRecording()
             isRecording.set(true)
             vadSegmenter.reset()
+            vadSegmenter.onRmsCalculated = { rms ->
+                onAudioLevelChanged?.invoke(rms)
+            }
 
             recordingJob = scope.launch {
                 val buffer = ByteArray(FRAME_SIZE_BYTES)

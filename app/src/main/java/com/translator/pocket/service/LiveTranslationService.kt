@@ -220,6 +220,25 @@ class LiveTranslationService : Service() {
 
         audioRecorder = AudioStreamRecorder(vadSegmenter!!)
 
+        var lastRmsUpdate = 0L
+        audioRecorder?.onAudioLevelChanged = { rms ->
+            val now = System.currentTimeMillis()
+            if (now - lastRmsUpdate > 160L && _isRunningFlow.value) {
+                lastRmsUpdate = now
+                val wave = when {
+                    rms > 600 -> " ▃▅▆█ [聲音宏亮]"
+                    rms > 250 -> " ▃▅▆ [說話中]"
+                    rms > 100 -> " ▃▅ [接收中]"
+                    rms > 30  -> " ▂ [微弱背景音]"
+                    else      -> "   [安靜等待中]"
+                }
+                val currentStatus = _statusTextFlow.value
+                if (currentStatus.startsWith("正在背景聆聽") || currentStatus.startsWith("正在聆聽") || currentStatus.contains("[")) {
+                    _statusTextFlow.value = "正在聆聽對話$wave"
+                }
+            }
+        }
+
         if (settings.engineType == EngineType.GEMINI_LIVE) {
             liveAudioPlayer?.start()
             geminiLiveEngine?.start(activeSourceLang, activeTargetLang)
@@ -248,7 +267,8 @@ class LiveTranslationService : Service() {
             _statusTextFlow.value = "偵測到語句，正在極速口譯中..."
 
             val wavBytes = WavEncoder.pcmToWav(pcmBytes)
-            val engine: ITranslationEngine = if (settings.engineType == EngineType.CLOUD_AI && settings.groqApiKey.isNotBlank()) {
+            val hasApiKey = settings.groqApiKey.isNotBlank() || settings.geminiApiKey.isNotBlank()
+            val engine: ITranslationEngine = if (settings.engineType == EngineType.CLOUD_AI && hasApiKey) {
                 cloudEngine
             } else {
                 builtinEngine
@@ -277,9 +297,23 @@ class LiveTranslationService : Service() {
                     ttsManager?.speak(result.translatedText)
                 }
             } else {
-                val errorMsg = result.errorMessage ?: "翻譯無結果"
+                val errorMsg = result.errorMessage ?: "未辨識到清晰語音"
                 Log.w(TAG, errorMsg)
-                _statusTextFlow.value = "聆聽中 ($errorMsg)"
+                _statusTextFlow.value = "⚠️ $errorMsg"
+
+                val hint = if (errorMsg.contains("API")) {
+                    "⚠️ 尚未設定 API Key！請點擊右上角 ⚙️ 設定填寫金鑰，或切換為免金鑰模式。"
+                } else {
+                    "⚠️ 收到語句但未轉譯成功 ($errorMsg)。請稍後再試或更換引擎。"
+                }
+                _messageFlow.emit(
+                    TranslationMessage(
+                        originalText = "系統提示",
+                        sourceLangName = "提示",
+                        translatedText = hint,
+                        targetLangName = "提示"
+                    )
+                )
             }
         }
     }

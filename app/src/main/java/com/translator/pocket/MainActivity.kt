@@ -237,6 +237,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startTranslationService() {
+        // 檢查金鑰設定，若未填寫則彈出導引對話框，絕不默默卡死
+        if (settings.engineType == EngineType.GEMINI_LIVE && settings.geminiApiKey.isBlank()) {
+            showMissingKeyDialog("Gemini Live 真人同步口譯")
+            return
+        }
+        if (settings.engineType == EngineType.CLOUD_AI && settings.groqApiKey.isBlank() && settings.geminiApiKey.isBlank()) {
+            showMissingKeyDialog("極速 AI 同聲傳譯")
+            return
+        }
+
         val intent = Intent(this, LiveTranslationService::class.java).apply {
             action = LiveTranslationService.ACTION_START
         }
@@ -245,6 +255,23 @@ class MainActivity : AppCompatActivity() {
         } else {
             startService(intent)
         }
+    }
+
+    private fun showMissingKeyDialog(engineName: String) {
+        com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+            .setTitle("💡 尚未填入 API Key")
+            .setMessage("您目前選擇了「$engineName」，需要 API Key 才能連線雲端 AI 模型。\n\n• 若您有 Key：請前往設定貼上\n• 若您無 Key：可一鍵切換為免費免金鑰模式")
+            .setPositiveButton("前往設定填寫") { _, _ ->
+                val sheet = SettingsBottomSheet {}
+                sheet.show(supportFragmentManager, "SettingsBottomSheet")
+            }
+            .setNeutralButton("一鍵切換免金鑰模式") { _, _ ->
+                settings.engineType = EngineType.BUILTIN
+                Toast.makeText(this, "已切換為免費免金鑰模式！", Toast.LENGTH_SHORT).show()
+                startTranslationService()
+            }
+            .setNegativeButton("取消", null)
+            .show()
     }
 
     private fun stopTranslationService() {

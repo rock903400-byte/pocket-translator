@@ -8,17 +8,19 @@ class VadSegmenter(
     private val onSentenceReady: (ByteArray) -> Unit
 ) {
     // 門檻計算：sensitivityLevel 越小門檻越低
-    // 預設 5 對應門檻約 600 RMS
-    private val energyThreshold: Double = (sensitivityLevel * 100.0 + 150.0).coerceIn(300.0, 2000.0)
+    // 預設 5 對應門檻約 150 RMS，即使輕聲細語也能精準識別
+    private val energyThreshold: Double = (sensitivityLevel * 25.0 + 25.0).coerceIn(60.0, 450.0)
 
     // 靜音逾時斷句時間 (毫秒)
-    private val silenceTimeoutMs: Long = 650L
+    private val silenceTimeoutMs: Long = 600L
 
-    // 最少語音時長（低於此時長視為雜訊、咳嗽或清喉嚨）
-    private val minSpeechBytes: Int = 16000 * 2 * 6 / 10 // 約 0.6 秒 (19,200 bytes)
+    // 最少語音時長（約 0.3 秒，9,600 bytes，短語如「你好」、「Hi」均能被精準斷句）
+    private val minSpeechBytes: Int = 16000 * 2 * 3 / 10
 
     // 最長單句上限（超過 5 秒強制分段，防止單一請求過大延遲增加）
     private val maxSpeechBytes: Int = 16000 * 2 * 5 // 5 秒 (160,000 bytes)
+
+    var onRmsCalculated: ((Double) -> Unit)? = null
 
     private val speechBuffer = ByteArrayOutputStream()
     private var isSpeaking = false
@@ -32,6 +34,7 @@ class VadSegmenter(
         if (length <= 0) return
 
         val rms = calculateRms(frame, length)
+        onRmsCalculated?.invoke(rms)
         val isVoiceActive = rms > energyThreshold
 
         if (isVoiceActive) {
