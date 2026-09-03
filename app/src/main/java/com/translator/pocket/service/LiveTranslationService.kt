@@ -457,18 +457,53 @@ class LiveTranslationService : Service() {
             onFinalText = { finalText ->
                 pipeline?.submit(state.onFinal(finalText, SystemClock.elapsedRealtime()))
             },
+            onAborted = {
+                // 辨識器放棄了這一段，但已經聽到的文字是真的，該定案就定案
+                pipeline?.submit(state.onUtteranceAborted())
+            },
             onRmsChanged = { _ -> },
             onStateChanged = { text ->
                 _statusTextFlow.value = text
+            },
+            onFatalError = { message ->
+                handleRecognizerFatalError(message)
             }
         )
-        googleStreamingRecognizer?.start(activeSourceLang)
+        googleStreamingRecognizer?.start(
+            languageCode = activeSourceLang,
+            preferOfflineRecognition = settings.preferOfflineRecognition,
+            silenceLengthMs = if (activeMode == TranslationMode.TWO_WAY) {
+                GoogleStreamingRecognizer.SILENCE_CONVERSATION_MS
+            } else {
+                GoogleStreamingRecognizer.SILENCE_TRANSCRIBE_MS
+            }
+        )
 
         startSettleTicker()
 
         _isRunningFlow.value = true
         _statusTextFlow.value = "Google 原生即時口譯已啟動 (邊講邊譯)"
         prepareOfflineTranslation()
+    }
+
+    /**
+     * 語音辨識無法繼續（缺權限、裝置不支援、連續失敗）。
+     * 舊版遇到這些情況會每 250ms 無限重試，使用者只看到畫面永遠停在「聆聽中」。
+     */
+    private fun handleRecognizerFatalError(message: String) {
+        Log.e(TAG, "語音辨識中止: $message")
+        _statusTextFlow.value = "⚠️ $message"
+        serviceScope.launch {
+            _messageFlow.emit(
+                TranslationMessage(
+                    originalText = "語音辨識",
+                    sourceLangName = "系統",
+                    translatedText = "⚠️ $message",
+                    targetLangName = "系統"
+                )
+            )
+        }
+        stopForegroundTranslation()
     }
 
     /**

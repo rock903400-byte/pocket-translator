@@ -27,7 +27,18 @@ class AppSettings(context: Context) {
         // REST generateContent 專用模型 (高速 AI 模式的 Gemini 備援)
         const val DEFAULT_GEMINI_REST_MODEL = "gemini-3.5-flash"
         private const val KEY_AUDIO_OUTPUT = "audio_output_preference"
+        private const val KEY_PREFER_OFFLINE_RECOGNITION = "prefer_offline_recognition"
     }
+
+    /**
+     * 是否優先使用裝置上的離線語音辨識。
+     * 語言包在的裝置延遲大勝，不在的會直接回報語言不支援 ——
+     * GoogleStreamingRecognizer 會自動關掉這個偏好重試一次，所以開著是安全的，
+     * 但預設關閉：多數裝置的中日韓離線包品質明顯較差。
+     */
+    var preferOfflineRecognition: Boolean
+        get() = prefs.getBoolean(KEY_PREFER_OFFLINE_RECOGNITION, false)
+        set(value) = prefs.edit().putBoolean(KEY_PREFER_OFFLINE_RECOGNITION, value).apply()
 
     var audioOutputPreference: AudioOutputTarget
         get() {
