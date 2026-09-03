@@ -7,7 +7,7 @@ import com.google.mlkit.nl.translate.Translation
 import com.google.mlkit.nl.translate.TranslatorOptions
 import com.translator.pocket.model.TranslationResult
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -15,6 +15,7 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resumeWithException
 
 class BuiltinEngine(
     private val context: Context
@@ -106,8 +107,8 @@ class BuiltinEngine(
                 .build()
 
             val translator = Translation.getClient(options)
-            translator.downloadModelIfNeeded().await()
-            val translated = translator.translate(text).await()
+            translator.downloadModelIfNeeded().awaitTask()
+            val translated = translator.translate(text).awaitTask()
             translator.close()
             translated
         } catch (e: Exception) {
@@ -115,6 +116,12 @@ class BuiltinEngine(
             translateFreeOnline(text, srcLang, tgtLang)
         }
     }
+
+    private suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitTask(): T =
+        suspendCancellableCoroutine { continuation ->
+            addOnSuccessListener { result -> continuation.resumeWith(Result.success(result)) }
+            addOnFailureListener { exception -> continuation.resumeWithException(exception) }
+        }
 
     private fun translateFreeOnline(text: String, src: String, tgt: String): String {
         return try {
