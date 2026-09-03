@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -9,7 +11,7 @@ android {
 
     signingConfigs {
         create("releaseSigning") {
-            val localProps = java.util.Properties().apply {
+            val localProps = Properties().apply {
                 val f = file("${rootDir}/local.properties")
                 if (f.exists()) f.inputStream().use { load(it) }
             }
@@ -24,8 +26,8 @@ android {
         applicationId = "com.translator.pocket"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.3.0"
+        versionCode = 14
+        versionName = "1.4.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
