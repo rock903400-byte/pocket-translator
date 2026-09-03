@@ -653,7 +653,7 @@ class LiveTranslationService : Service() {
                 isProvisional = needsTraditionalUpgrade
             )
             _messageFlow.emit(message)
-            updateNotification(口譯：)
+            updateNotification("口譯：$translatedText")
 
             val target = audioRouter?.activeTargetFlow?.value ?: AudioOutputTarget.AUTO_HEADPHONES
             if (target != AudioOutputTarget.MUTE) {
