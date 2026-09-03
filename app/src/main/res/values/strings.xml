@@ -1,0 +1,37 @@
+<resources>
+    <string name="app_name">隨身口譯 (Pocket Translator)</string>
+    <string name="service_notification_channel">即時翻譯常駐服務</string>
+    <string name="service_notification_channel_desc">維持關閉螢幕時的背景錄音與耳機即時口譯播放</string>
+    <string name="notification_title">隨身即時口譯運作中</string>
+    <string name="notification_listening">正在背景聆聽外語對話...</string>
+    <string name="notification_action_stop">結束翻譯</string>
+    <string name="notification_action_pause">暫停</string>
+    <string name="notification_action_resume">繼續</string>
+
+    <!-- UI Strings -->
+    <string name="mode_one_way">單向即時同傳 (耳機收聽)</string>
+    <string name="mode_two_way">雙向交談對話 (出國問答)</string>
+    <string name="btn_start_translation">開始即時口譯 (關螢幕可運作)</string>
+    <string name="btn_stop_translation">停止口譯</string>
+    <string name="stealth_mode_btn">AMOLED 純黑省電防誤觸</string>
+    <string name="stealth_mode_hint">雙擊螢幕任意位置退出全黑省電模式</string>
+    <string name="clear_history">清空紀錄</string>
+    <string name="settings">設定</string>
+
+    <string name="status_idle">待命中 — 點擊開始後可直接按電源鍵關閉螢幕</string>
+    <string name="status_listening">正在聆聽中... (支援關閉螢幕)</string>
+    <string name="status_translating">正在翻譯中...</string>
+    <string name="status_speaking">正在耳機播放語音...</string>
+
+    <!-- Settings Dialog -->
+    <string name="settings_title">翻譯與硬體設定</string>
+    <string name="engine_type_title">翻譯核心選擇</string>
+    <string name="engine_cloud">高速 AI API (Groq / Gemini - 延遲約 0.5s)</string>
+    <string name="engine_builtin">免費內建模式 (Google 語音與翻譯 - 免金鑰)</string>
+    <string name="groq_api_key_label">Groq API Key (留空則使用免費內建)</string>
+    <string name="groq_api_key_hint">gsk_...</string>
+    <string name="gemini_api_key_label">Gemini API Key (選填)</string>
+    <string name="vad_sensitivity_label">語音偵測靈敏度 (VAD)</string>
+    <string name="tts_speed_label">耳機口譯語速 (1.0x ~ 1.5x)</string>
+    <string name="save_settings">儲存設定</string>
+</resources>
