@@ -96,6 +96,10 @@ class BuiltinEngine(
         return null
     }
 
+    suspend fun translateText(text: String, srcLang: String, tgtLang: String): String {
+        return translateWithMlKit(text, srcLang, tgtLang)
+    }
+
     private suspend fun translateWithMlKit(text: String, srcLang: String, tgtLang: String): String {
         return try {
             val source = mapToMlKitLang(srcLang)

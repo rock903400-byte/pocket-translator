@@ -23,7 +23,11 @@ class EarphoneTtsManager(
     private var pendingSpeechRate = 1.15f
 
     init {
-        tts = TextToSpeech(context, this)
+        tts = try {
+            TextToSpeech(context, this, "com.google.android.tts")
+        } catch (e: Exception) {
+            TextToSpeech(context, this)
+        }
     }
 
     override fun onInit(status: Int) {
@@ -86,6 +90,23 @@ class EarphoneTtsManager(
         val result = tts?.setLanguage(locale)
         if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
             Log.w(TAG, "語音朗讀語言暫不支援或需下載套件: $langCode")
+        } else {
+            try {
+                val voices = tts?.voices
+                if (!voices.isNullOrEmpty()) {
+                    val highQualityVoice = voices.firstOrNull { v ->
+                        v.locale.language == locale.language &&
+                        (v.name.contains("network", ignoreCase = true) || v.name.contains("neural", ignoreCase = true))
+                    } ?: voices.firstOrNull { it.locale.language == locale.language }
+
+                    if (highQualityVoice != null) {
+                        tts?.voice = highQualityVoice
+                        Log.d(TAG, "已選用最高品質 Google 語音: ${highQualityVoice.name}")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "選擇高音質語音失敗", e)
+            }
         }
     }
 

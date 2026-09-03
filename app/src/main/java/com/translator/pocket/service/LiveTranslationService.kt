@@ -17,6 +17,7 @@ import com.translator.pocket.PocketTranslatorApp
 import com.translator.pocket.R
 import com.translator.pocket.audio.AudioOutputRouter
 import com.translator.pocket.audio.AudioStreamRecorder
+import com.translator.pocket.audio.GoogleStreamingRecognizer
 import com.translator.pocket.audio.LiveAudioTrackPlayer
 import com.translator.pocket.audio.VadSegmenter
 import com.translator.pocket.audio.WavEncoder
@@ -69,6 +70,7 @@ class LiveTranslationService : Service() {
 
     private var audioRecorder: AudioStreamRecorder? = null
     private var vadSegmenter: VadSegmenter? = null
+    private var googleStreamingRecognizer: GoogleStreamingRecognizer? = null
     private var ttsManager: EarphoneTtsManager? = null
     private var liveAudioPlayer: LiveAudioTrackPlayer? = null
     private var geminiLiveEngine: GeminiLiveEngine? = null
@@ -225,7 +227,29 @@ class LiveTranslationService : Service() {
         ttsManager?.setSpeechRate(settings.ttsSpeed)
         ttsManager?.setLanguage(activeTargetLang)
 
-        // 4. 初始化 VAD 與錄音器
+        // 若為 Google 原生模式：採用流式語音辨識 (同 Google 翻譯 App)
+        if (settings.engineType == EngineType.BUILTIN) {
+            googleStreamingRecognizer?.stop()
+            googleStreamingRecognizer = GoogleStreamingRecognizer(
+                context = this,
+                onPartialText = { partial ->
+                    _statusTextFlow.value = "正在聆聽：$partial"
+                },
+                onFinalText = { finalText ->
+                    handleRecognizedText(finalText)
+                },
+                onRmsChanged = { _ -> },
+                onStateChanged = { state ->
+                    _statusTextFlow.value = state
+                }
+            )
+            googleStreamingRecognizer?.start(activeSourceLang)
+            _isRunningFlow.value = true
+            _statusTextFlow.value = "Google 原生流式口譯已啟動 (同 Google 翻譯 App)"
+            return
+        }
+
+        // 4. 初始化 VAD 與錄音器 (Groq / Gemini 模式)
         vadSegmenter = VadSegmenter(settings.vadSensitivity) { pcmBytes ->
             if (settings.engineType != EngineType.GEMINI_LIVE || geminiLiveEngine?.isConnectionReady != true) {
                 handleCapturedSpeech(pcmBytes)
@@ -349,9 +373,40 @@ class LiveTranslationService : Service() {
         updateNotification("已切換為：${if (activeMode == TranslationMode.ONE_WAY) "單向同傳" else "雙向對話"}")
     }
 
+    private fun handleRecognizedText(originalText: String) {
+        serviceScope.launch {
+            _statusTextFlow.value = "即時轉譯中：$originalText"
+
+            val translatedText = builtinEngine.translateText(originalText, activeSourceLang, activeTargetLang)
+
+            if (translatedText.isNotBlank()) {
+                val message = TranslationMessage(
+                    originalText = originalText,
+                    sourceLangName = activeSourceLang,
+                    translatedText = translatedText,
+                    targetLangName = activeTargetLang
+                )
+                _messageFlow.emit(message)
+                updateNotification("口譯：$translatedText")
+
+                val target = audioRouter?.activeTargetFlow?.value ?: AudioOutputTarget.AUTO_HEADPHONES
+                if (target != AudioOutputTarget.MUTE) {
+                    if (target == AudioOutputTarget.SPEAKER) {
+                        audioRecorder?.isMutedByPlayback?.set(true)
+                    }
+                    ttsManager?.speak(translatedText)
+                }
+                _statusTextFlow.value = "正在聆聽中... (隨說隨譯)"
+            }
+        }
+    }
+
     private fun stopForegroundTranslation() {
         _isRunningFlow.value = false
         _statusTextFlow.value = "口譯已停止"
+
+        googleStreamingRecognizer?.stop()
+        googleStreamingRecognizer = null
 
         audioRecorder?.onRawFrameCaptured = null
         audioRecorder?.stopRecording()
