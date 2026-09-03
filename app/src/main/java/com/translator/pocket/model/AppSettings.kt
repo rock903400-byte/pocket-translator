@@ -19,6 +19,13 @@ class AppSettings(context: Context) {
         private const val KEY_MODE = "translation_mode"
         private const val KEY_GEMINI_LIVE_VOICE = "gemini_live_voice"
         private const val KEY_GEMINI_MODEL = "gemini_model_name"
+        private const val KEY_GEMINI_LIVE_MODEL = "gemini_live_model_name"
+
+        // Live API 專用模型 (只能走 WebSocket，不能用 REST generateContent)
+        const val DEFAULT_GEMINI_LIVE_MODEL = "gemini-3.5-live-translate-preview"
+
+        // REST generateContent 專用模型 (高速 AI 模式的 Gemini 備援)
+        const val DEFAULT_GEMINI_REST_MODEL = "gemini-3.5-flash"
         private const val KEY_AUDIO_OUTPUT = "audio_output_preference"
     }
 
@@ -37,9 +44,28 @@ class AppSettings(context: Context) {
         get() = prefs.getString(KEY_GEMINI_LIVE_VOICE, "Puck") ?: "Puck"
         set(value) = prefs.edit().putString(KEY_GEMINI_LIVE_VOICE, value).apply()
 
+    /** Gemini Live (WebSocket 雙向語音) 使用的模型 */
+    var geminiLiveModelName: String
+        get() = prefs.getString(KEY_GEMINI_LIVE_MODEL, DEFAULT_GEMINI_LIVE_MODEL)
+            ?.trim()?.ifEmpty { DEFAULT_GEMINI_LIVE_MODEL } ?: DEFAULT_GEMINI_LIVE_MODEL
+        set(value) = prefs.edit()
+            .putString(KEY_GEMINI_LIVE_MODEL, value.trim().ifEmpty { DEFAULT_GEMINI_LIVE_MODEL })
+            .apply()
+
+    /**
+     * Gemini REST (generateContent) 使用的模型。
+     * 舊版曾把 Live 專用模型寫進這個欄位，會讓 REST 呼叫直接 404，這裡自動修正回一般模型。
+     */
     var geminiModelName: String
-        get() = prefs.getString(KEY_GEMINI_MODEL, "gemini-3.5-live-translate-preview") ?: "gemini-3.5-live-translate-preview"
-        set(value) = prefs.edit().putString(KEY_GEMINI_MODEL, value.trim()).apply()
+        get() {
+            val stored = prefs.getString(KEY_GEMINI_MODEL, DEFAULT_GEMINI_REST_MODEL)?.trim().orEmpty()
+            val isLiveOnly = stored.contains("live", ignoreCase = true) ||
+                stored.contains("transcribe", ignoreCase = true)
+            return if (stored.isEmpty() || isLiveOnly) DEFAULT_GEMINI_REST_MODEL else stored
+        }
+        set(value) = prefs.edit()
+            .putString(KEY_GEMINI_MODEL, value.trim().ifEmpty { DEFAULT_GEMINI_REST_MODEL })
+            .apply()
 
     var engineType: EngineType
         get() {
@@ -73,7 +99,7 @@ class AppSettings(context: Context) {
         set(value) = prefs.edit().putInt(KEY_SOURCE_LANG_INDEX, value).apply()
 
     var targetLangIndex: Int
-        get() = prefs.getInt(KEY_TARGET_LANG_INDEX, 0) // 預設繁體中文
+        get() = prefs.getInt(KEY_TARGET_LANG_INDEX, 3) // 預設繁體中文 (supportedLanguages[3])
         set(value) = prefs.edit().putInt(KEY_TARGET_LANG_INDEX, value).apply()
 
     var translationMode: TranslationMode

@@ -16,11 +16,12 @@ import java.util.concurrent.TimeUnit
 class CloudAiEngine(
     private val groqApiKeyProvider: () -> String,
     private val geminiApiKeyProvider: () -> String,
-    private val geminiModelProvider: () -> String = { "gemini-3.5-live-translate-preview" }
+    private val geminiModelProvider: () -> String = { DEFAULT_REST_MODEL }
 ) : ITranslationEngine {
 
     companion object {
         private const val TAG = "CloudAiEngine"
+        const val DEFAULT_REST_MODEL = "gemini-3.5-flash"
         private val MEDIA_TYPE_WAV = "audio/wav".toMediaType()
         private val MEDIA_TYPE_JSON = "application/json; charset=utf-8".toMediaType()
     }
@@ -272,11 +273,13 @@ class CloudAiEngine(
             })
         }
 
-        val inputModel = geminiModelProvider().trim().ifEmpty { "gemini-3.5-live-translate-preview" }
-        val rawModel = when {
-            inputModel.contains("live", ignoreCase = true) || inputModel.contains("translate", ignoreCase = true) -> "gemini-3.5-live-translate-preview"
-            else -> inputModel
-        }
+        // Live 專用模型只存在於 WebSocket Live API，用 REST generateContent 呼叫必定失敗，
+        // 這裡一律換成可以走 REST 的一般模型。
+        val inputModel = geminiModelProvider().trim().ifEmpty { DEFAULT_REST_MODEL }
+        val rawModel = if (
+            inputModel.contains("live", ignoreCase = true) ||
+            inputModel.contains("transcribe", ignoreCase = true)
+        ) DEFAULT_REST_MODEL else inputModel
         val modelClean = rawModel.removePrefix("models/")
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelClean:generateContent"
 

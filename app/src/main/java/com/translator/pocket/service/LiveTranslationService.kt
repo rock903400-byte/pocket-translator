@@ -113,8 +113,7 @@ class LiveTranslationService : Service() {
         liveAudioPlayer = LiveAudioTrackPlayer()
         geminiLiveEngine = GeminiLiveEngine(
             apiKeyProvider = { settings.geminiApiKey },
-            modelNameProvider = { settings.geminiModelName },
-            voiceName = settings.geminiLiveVoice,
+            modelNameProvider = { settings.geminiLiveModelName },
             onAudioChunkReceived = { pcm24k ->
                 val target = audioRouter?.activeTargetFlow?.value ?: AudioOutputTarget.AUTO_HEADPHONES
                 if (target != AudioOutputTarget.MUTE) {
@@ -138,13 +137,13 @@ class LiveTranslationService : Service() {
             },
             onConnectionStateChanged = { isConnected, msg ->
                 _statusTextFlow.value = msg
-                if (!isConnected && (msg.contains("失敗") || msg.contains("異常"))) {
+                if (!isConnected && (msg.contains("失敗") || msg.contains("異常") || msg.contains("拒絕") || msg.contains("中斷"))) {
                     serviceScope.launch {
                         _messageFlow.emit(
                             TranslationMessage(
                                 originalText = "連線提示",
                                 sourceLangName = "系統",
-                                translatedText = "⚠️ $msg\n💡 建議：若 Live 連線受限，可至設定切換為【高速 AI 模式】，即可使用 Gemini 2.0 Flash 極速口譯！",
+                                translatedText = "⚠️ $msg\n💡 建議：確認 API Key 已開通 Live API，或至設定切換為【高速 AI 模式】改用 Gemini Flash 極速口譯。",
                                 targetLangName = "系統"
                             )
                         )

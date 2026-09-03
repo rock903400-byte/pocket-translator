@@ -13,19 +13,26 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Google Gemini Multimodal Live API (雙向 WebSocket 實時語音串流引擎)
+ * Google Gemini Live API (雙向 WebSocket 實時語音串流引擎)
  * 端到端 聲音進 -> 聲音出 (Audio-in -> Audio-out)
+ *
+ * 對應官方 gemini-3.5-live-translate-preview 規格：
+ * - setup 只接受 model + generationConfig(responseModalities / inputAudioTranscription /
+ *   outputAudioTranscription / translationConfig)，不支援 systemInstruction 與 speechConfig 語音選擇
+ * - 音訊輸入為 realtimeInput.audio (16kHz PCM)，輸出為 24kHz PCM
+ * - 伺服器訊息以 binary frame 傳回，內容為 UTF-8 JSON
  */
 class GeminiLiveEngine(
     private val apiKeyProvider: () -> String,
-    private val modelNameProvider: () -> String = { "gemini-3.5-live-translate-preview" },
-    private val voiceName: String = "Puck",
+    private val modelNameProvider: () -> String = { DEFAULT_LIVE_MODEL },
     private val onAudioChunkReceived: (ByteArray) -> Unit,
     private val onTranscriptReceived: (originalText: String, translatedText: String) -> Unit,
     private val onConnectionStateChanged: (isConnected: Boolean, message: String) -> Unit
@@ -33,6 +40,30 @@ class GeminiLiveEngine(
     companion object {
         private const val TAG = "GeminiLiveEngine"
         private const val WS_HOST = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+
+        const val DEFAULT_LIVE_MODEL = "gemini-3.5-live-translate-preview"
+
+        /** 官方建議每次送出 100ms 音訊：16000Hz * 2 bytes * 0.1s */
+        private const val SEND_CHUNK_BYTES = 3200
+
+        /** 逐字稿在這段時間沒有新增量時，即使沒收到 turnComplete 也先送出字幕 */
+        private const val TRANSCRIPT_FLUSH_DELAY_MS = 2500L
+
+        /**
+         * App 內部語言代碼 -> Live Translate 支援的 BCP-47 代碼。
+         * 官方僅接受 zh-Hant / zh-Hans，傳入 zh-TW 會被拒絕。
+         */
+        fun toLiveTranslateCode(appLangCode: String): String {
+            val code = appLangCode.trim()
+            return when {
+                code.equals("zh-TW", true) || code.equals("zh-Hant", true) ||
+                    code.equals("zh-HK", true) || code.equals("zh-MO", true) -> "zh-Hant"
+                code.equals("zh-CN", true) || code.equals("zh-Hans", true) ||
+                    code.equals("zh-SG", true) || code.equals("zh", true) -> "zh-Hans"
+                code.contains("-") -> code.substringBefore("-").lowercase()
+                else -> code.lowercase()
+            }
+        }
     }
 
     private val client = OkHttpClient.Builder()
@@ -46,18 +77,27 @@ class GeminiLiveEngine(
     private val isRunning = AtomicBoolean(false)
     private val isReady = AtomicBoolean(false)
 
+    /** 只有在收到 setupComplete 之後才算真的可以送音訊 */
     val isConnectionReady: Boolean get() = isReady.get()
 
     private val scope = CoroutineScope(Dispatchers.IO)
     private var reconnectJob: Job? = null
+    private var flushJob: Job? = null
+    private var reconnectAttempts = 0
 
-    private var activeSourceLangName = "外語"
-    private var activeTargetLangName = "繁體中文"
+    private var activeTargetLangCode = "zh-Hant"
+
+    /** 累積 20ms 小封包，湊滿 100ms 再送，避免大量微封包拖垮連線 */
+    private val pendingAudio = ByteArrayOutputStream(SEND_CHUNK_BYTES * 2)
+
+    private val transcriptLock = Any()
+    private val inputTranscript = StringBuilder()
+    private val outputTranscript = StringBuilder()
 
     fun start(sourceLang: String, targetLang: String) {
-        activeSourceLangName = sourceLang
-        activeTargetLangName = targetLang
+        activeTargetLangCode = toLiveTranslateCode(targetLang)
         isRunning.set(true)
+        reconnectAttempts = 0
         connect()
     }
 
@@ -68,13 +108,16 @@ class GeminiLiveEngine(
             return
         }
 
+        synchronized(pendingAudio) { pendingAudio.reset() }
+        clearTranscripts()
+
         val url = "$WS_HOST?key=$apiKey"
         val request = Request.Builder()
             .url(url)
             .addHeader("x-goog-api-key", apiKey)
             .build()
 
-        onConnectionStateChanged(false, "正在連線至 Gemini Live 擬真同步口譯伺服器...")
+        onConnectionStateChanged(false, "正在連線至 Gemini Live 同步口譯伺服器...")
 
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(ws: WebSocket, response: Response) {
@@ -86,81 +129,140 @@ class GeminiLiveEngine(
                 handleServerMessage(text)
             }
 
+            // Gemini Live 的回應是 binary frame (UTF-8 JSON)，沒有這個 override 等於完全收不到任何回應
+            override fun onMessage(ws: WebSocket, bytes: ByteString) {
+                handleServerMessage(bytes.utf8())
+            }
+
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+                if (ws !== webSocket) return
                 val respBody = try { response?.body?.string() } catch (e: Exception) { null }
                 val code = response?.code
                 Log.e(TAG, "Gemini Live 連線失敗: ${t.message}, HTTP: $code, Body: $respBody", t)
                 isReady.set(false)
-                val detail = if (code != null) " (HTTP $code: ${respBody ?: t.localizedMessage})" else " (${t.localizedMessage})"
+
+                val detail = if (code != null) {
+                    " (HTTP $code: ${respBody?.take(200) ?: t.localizedMessage})"
+                } else {
+                    " (${t.localizedMessage ?: t.javaClass.simpleName})"
+                }
                 onConnectionStateChanged(false, "Gemini Live 連線失敗$detail")
 
-                if (isRunning.get()) {
+                if (isRunning.get() && code != 400 && code != 401 && code != 403 && code != 404) {
                     scheduleReconnect()
                 }
             }
 
+            override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+                if (ws !== webSocket) return
+                Log.w(TAG, "Gemini Live 伺服器關閉連線: $code - $reason")
+                isReady.set(false)
+                handleServerClose(code, reason)
+            }
+
             override fun onClosed(ws: WebSocket, code: Int, reason: String) {
-                Log.d(TAG, "Gemini Live 連線正常關閉: $code - $reason")
+                if (ws !== webSocket) return
+                Log.d(TAG, "Gemini Live 連線已關閉: $code - $reason")
                 isReady.set(false)
             }
         })
     }
 
-    private fun sendSetupMessage(ws: WebSocket) {
-        val systemPrompt = "You are an elite real-time simultaneous interpreter. When you receive speech audio in any language, translate it instantaneously and speak it out in fluent, natural, professional Traditional Chinese (Taiwan, 繁體中文). Embody a calm, articulate human interpreter. Never output conversational pleasantries, greetings, or meta commentary. Only speak the exact spoken translation in real time."
+    /**
+     * 伺服器主動關閉多半代表 setup 被拒絕 (模型名稱錯、欄位不合法、金鑰無權限)。
+     * 這類錯誤重連幾次也不會好，直接把原因顯示給使用者。
+     */
+    private fun handleServerClose(code: Int, reason: String) {
+        val permanent = code == 1007 || code == 1008 || code == 1003 ||
+            reason.contains("Unknown name", true) ||
+            reason.contains("INVALID_ARGUMENT", true) ||
+            reason.contains("not found", true) ||
+            reason.contains("PERMISSION_DENIED", true) ||
+            reason.contains("API key", true)
 
-        val inputModel = modelNameProvider().trim().ifEmpty { "gemini-3.5-live-translate-preview" }
-        val rawModel = when {
-            inputModel.contains("live", ignoreCase = true) || inputModel.contains("translate", ignoreCase = true) -> "gemini-3.5-live-translate-preview"
-            else -> inputModel
+        val shown = if (reason.isBlank()) "伺服器關閉連線 (code $code)" else reason.take(240)
+
+        if (permanent) {
+            isRunning.set(false)
+            onConnectionStateChanged(false, "Gemini Live 設定被拒絕：$shown")
+        } else {
+            onConnectionStateChanged(false, "Gemini Live 連線中斷 ($code)：$shown")
+            if (isRunning.get()) scheduleReconnect()
         }
-        val finalModel = if (rawModel.startsWith("models/")) rawModel else "models/$rawModel"
+    }
+
+    private fun sendSetupMessage(ws: WebSocket) {
+        val inputModel = modelNameProvider().trim().ifEmpty { DEFAULT_LIVE_MODEL }
+        val finalModel = if (inputModel.startsWith("models/")) inputModel else "models/$inputModel"
+
+        // gemini-*-live-translate-* 是純翻譯模型：不支援 systemInstruction / speechConfig / 工具，
+        // 多送任何一個欄位伺服器都會直接關閉連線。
+        val isTranslateModel = finalModel.contains("live-translate", ignoreCase = true)
+
+        val generationConfig = JSONObject().apply {
+            put("responseModalities", JSONArray().apply { put("AUDIO") })
+            put("inputAudioTranscription", JSONObject())
+            put("outputAudioTranscription", JSONObject())
+            if (isTranslateModel) {
+                put("translationConfig", JSONObject().apply {
+                    put("targetLanguageCode", activeTargetLangCode)
+                    put("echoTargetLanguage", false) // 對方已經講目標語言時保持安靜，不要複誦
+                })
+            }
+        }
 
         val setupJson = JSONObject().apply {
             put("setup", JSONObject().apply {
                 put("model", finalModel)
-                put("generationConfig", JSONObject().apply {
-                    put("responseModalities", JSONArray().apply {
-                        put("AUDIO")
-                    })
-                    put("speechConfig", JSONObject().apply {
-                        put("voiceConfig", JSONObject().apply {
-                            put("prebuiltVoiceConfig", JSONObject().apply {
-                                put("voiceName", voiceName)
+                put("generationConfig", generationConfig)
+                if (!isTranslateModel) {
+                    // 一般 Live 對話模型才吃得下系統指令
+                    put("systemInstruction", JSONObject().apply {
+                        put("parts", JSONArray().apply {
+                            put(JSONObject().apply {
+                                put(
+                                    "text",
+                                    "You are an elite real-time simultaneous interpreter. Translate incoming speech instantly and speak it out naturally in the target language. Never add greetings or commentary."
+                                )
                             })
                         })
                     })
-                })
-                put("systemInstruction", JSONObject().apply {
-                    put("parts", JSONArray().apply {
-                        put(JSONObject().apply {
-                            put("text", systemPrompt)
-                        })
-                    })
-                })
+                }
             })
         }
 
         ws.send(setupJson.toString())
-        isReady.set(true)
-        onConnectionStateChanged(true, "Gemini Live 真人同步口譯已就緒 (關螢幕仍持續運作)")
+        Log.d(TAG, "已送出 setup：model=$finalModel, target=$activeTargetLangCode")
+        onConnectionStateChanged(false, "已送出設定，等待 Gemini Live 就緒...")
+        // 注意：isReady 必須等 setupComplete 回來才能打開
     }
 
     /**
-     * 接收手機 16kHz PCM 音訊塊並實時串流傳送給 Gemini
+     * 接收手機 16kHz PCM 音訊塊，累積成 100ms 再實時串流傳送給 Gemini
      */
     fun sendAudioFrame(pcm16kBytes: ByteArray, length: Int) {
         if (!isReady.get() || !isRunning.get()) return
 
+        val payload: ByteArray? = synchronized(pendingAudio) {
+            pendingAudio.write(pcm16kBytes, 0, length)
+            if (pendingAudio.size() >= SEND_CHUNK_BYTES) {
+                val out = pendingAudio.toByteArray()
+                pendingAudio.reset()
+                out
+            } else {
+                null
+            }
+        }
+
+        if (payload == null) return
+
         try {
-            val base64Data = Base64.encodeToString(pcm16kBytes, 0, length, Base64.NO_WRAP)
+            val base64Data = Base64.encodeToString(payload, Base64.NO_WRAP)
             val audioPayload = JSONObject().apply {
                 put("realtimeInput", JSONObject().apply {
-                    put("mediaChunks", JSONArray().apply {
-                        put(JSONObject().apply {
-                            put("mimeType", "audio/pcm;rate=16000")
-                            put("data", base64Data)
-                        })
+                    put("audio", JSONObject().apply {
+                        put("mimeType", "audio/pcm;rate=16000")
+                        put("data", base64Data)
                     })
                 })
             }
@@ -174,59 +276,128 @@ class GeminiLiveEngine(
         try {
             val root = JSONObject(jsonText)
 
-            val serverContent = root.optJSONObject("serverContent")
-            if (serverContent != null) {
-                val modelTurn = serverContent.optJSONObject("modelTurn")
-                if (modelTurn != null) {
-                    val parts = modelTurn.optJSONArray("parts")
-                    if (parts != null) {
-                        for (i in 0 until parts.length()) {
-                            val part = parts.getJSONObject(i)
+            if (root.has("setupComplete")) {
+                isReady.set(true)
+                reconnectAttempts = 0
+                Log.d(TAG, "收到 setupComplete，Gemini Live 已就緒")
+                onConnectionStateChanged(true, "Gemini Live 同步口譯已就緒 (關螢幕仍持續運作)")
+                return
+            }
 
-                            // 1. 取得串流語音 PCM 24kHz
-                            val inlineData = part.optJSONObject("inlineData")
-                            if (inlineData != null) {
-                                val mimeType = inlineData.optString("mimeType", "")
-                                val dataBase64 = inlineData.optString("data", "")
-                                if (dataBase64.isNotEmpty()) {
-                                    val audioBytes = Base64.decode(dataBase64, Base64.DEFAULT)
-                                    onPlaybackStateChanged?.invoke(true)
-                                    onAudioChunkReceived(audioBytes)
-                                }
-                            }
+            if (root.has("goAway")) {
+                Log.w(TAG, "伺服器通知即將斷線 (goAway)，預先重連")
+                isReady.set(false)
+                if (isRunning.get()) scheduleReconnect()
+                return
+            }
 
-                            // 2. 取得文字字幕
-                            val text = part.optString("text", "")
-                            if (text.isNotBlank()) {
-                                onTranscriptReceived("(外語語音)", text)
-                            }
-                        }
-                    }
-                }
+            val serverContent = root.optJSONObject("serverContent") ?: return
 
-                val turnComplete = serverContent.optBoolean("turnComplete", false)
-                if (turnComplete) {
-                    onPlaybackStateChanged?.invoke(false)
-                }
-
-                // 處理使用者插話 (Barge-in / Interrupted)
-                val interrupted = serverContent.optBoolean("interrupted", false)
-                if (interrupted) {
-                    onPlaybackStateChanged?.invoke(false)
-                    Log.d(TAG, "偵測到說話插話 (Barge-in)，Gemini 已即時暫停輸出")
+            // 1. 原文逐字稿
+            serverContent.optJSONObject("inputTranscription")?.optString("text")?.let {
+                if (it.isNotEmpty()) {
+                    synchronized(transcriptLock) { inputTranscript.append(it) }
+                    scheduleTranscriptFlush()
                 }
             }
+
+            // 2. 翻譯後逐字稿
+            serverContent.optJSONObject("outputTranscription")?.optString("text")?.let {
+                if (it.isNotEmpty()) {
+                    synchronized(transcriptLock) { outputTranscript.append(it) }
+                    scheduleTranscriptFlush()
+                }
+            }
+
+            // 3. 串流語音 PCM 24kHz
+            val parts = serverContent.optJSONObject("modelTurn")?.optJSONArray("parts")
+            if (parts != null) {
+                for (i in 0 until parts.length()) {
+                    val part = parts.optJSONObject(i) ?: continue
+
+                    val dataBase64 = part.optJSONObject("inlineData")?.optString("data", "").orEmpty()
+                    if (dataBase64.isNotEmpty()) {
+                        val audioBytes = Base64.decode(dataBase64, Base64.DEFAULT)
+                        onPlaybackStateChanged?.invoke(true)
+                        onAudioChunkReceived(audioBytes)
+                    }
+
+                    val text = part.optString("text", "")
+                    if (text.isNotBlank()) {
+                        synchronized(transcriptLock) { outputTranscript.append(text) }
+                        scheduleTranscriptFlush()
+                    }
+                }
+            }
+
+            if (serverContent.optBoolean("turnComplete", false) ||
+                serverContent.optBoolean("generationComplete", false)
+            ) {
+                onPlaybackStateChanged?.invoke(false)
+                flushTranscripts()
+            }
+
+            // 使用者插話 (Barge-in / Interrupted)
+            if (serverContent.optBoolean("interrupted", false)) {
+                onPlaybackStateChanged?.invoke(false)
+                flushTranscripts()
+                Log.d(TAG, "偵測到說話插話 (Barge-in)，Gemini 已即時暫停輸出")
+            }
         } catch (e: Exception) {
-            Log.w(TAG, "解析伺服器訊息錯誤: ${e.message}")
+            Log.w(TAG, "解析伺服器訊息錯誤: ${e.message} / ${jsonText.take(200)}")
+        }
+    }
+
+    /** 沒收到 turnComplete 時的保險：安靜一段時間就先把字幕送出去 */
+    private fun scheduleTranscriptFlush() {
+        flushJob?.cancel()
+        flushJob = scope.launch {
+            delay(TRANSCRIPT_FLUSH_DELAY_MS)
+            if (isActive) flushTranscripts()
+        }
+    }
+
+    private fun flushTranscripts() {
+        flushJob?.cancel()
+        flushJob = null
+
+        val original: String
+        val translated: String
+        synchronized(transcriptLock) {
+            original = inputTranscript.toString().trim()
+            translated = outputTranscript.toString().trim()
+            inputTranscript.setLength(0)
+            outputTranscript.setLength(0)
+        }
+
+        if (translated.isNotEmpty() || original.isNotEmpty()) {
+            onTranscriptReceived(
+                original.ifEmpty { "(語音輸入)" },
+                translated.ifEmpty { "(語音已輸出)" }
+            )
+        }
+    }
+
+    private fun clearTranscripts() {
+        synchronized(transcriptLock) {
+            inputTranscript.setLength(0)
+            outputTranscript.setLength(0)
         }
     }
 
     private fun scheduleReconnect() {
         reconnectJob?.cancel()
+        val attempt = ++reconnectAttempts
+        if (attempt > 5) {
+            isRunning.set(false)
+            onConnectionStateChanged(false, "Gemini Live 連線重試多次仍失敗，請檢查網路或 API Key")
+            return
+        }
+        val backoffMs = (2000L * attempt).coerceAtMost(15000L)
         reconnectJob = scope.launch {
-            delay(3000)
+            delay(backoffMs)
             if (isActive && isRunning.get()) {
-                Log.d(TAG, "正在嘗試重新建立 Gemini Live 連線...")
+                Log.d(TAG, "正在嘗試重新建立 Gemini Live 連線... (第 $attempt 次)")
                 connect()
             }
         }
@@ -237,13 +408,18 @@ class GeminiLiveEngine(
         isReady.set(false)
         reconnectJob?.cancel()
         reconnectJob = null
+        flushJob?.cancel()
+        flushJob = null
+        clearTranscripts()
+        synchronized(pendingAudio) { pendingAudio.reset() }
 
+        val ws = webSocket
+        webSocket = null
         try {
-            webSocket?.close(1000, "User stopped")
+            ws?.close(1000, "User stopped")
         } catch (e: Exception) {
             // ignore
         }
-        webSocket = null
         onConnectionStateChanged(false, "Gemini Live 已關閉")
     }
 }

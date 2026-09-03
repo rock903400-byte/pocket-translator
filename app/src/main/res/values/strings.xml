@@ -31,8 +31,8 @@
     <string name="engine_builtin">Google 原生流式即時翻譯 (同 Google 翻譯 App - 免金鑰/極速)</string>
     <string name="gemini_api_key_label">Gemini API Key (Gemini Live 必填)</string>
     <string name="gemini_api_key_hint">貼上 Gemini 金鑰 (AQ. 或 AIza 開頭皆可)</string>
-    <string name="gemini_model_label">Gemini 模型名稱 (預設: Gemini 3.5 Live Translate)</string>
-    <string name="gemini_model_hint">gemini-3.5-live-translate-preview</string>
+    <string name="gemini_model_label">Live 模型名稱 (需為 Live API 專用模型)</string>
+    <string name="gemini_model_hint">gemini-3.5-live-translate-preview (預設)</string>
     <string name="groq_api_key_label">Groq API Key (Groq 模式必填)</string>
     <string name="groq_api_key_hint">gsk_...</string>
     <string name="vad_sensitivity_label">語音偵測靈敏度 (VAD)</string>
