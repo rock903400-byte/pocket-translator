@@ -1,5 +1,17 @@
 package com.translator.pocket.model
 
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * 訊息識別碼。
+ * 舊版用 System.currentTimeMillis() 當預設值，同一毫秒發出的兩則訊息會撞號，
+ * 而即時字幕的就地更新完全依賴這個 id 的唯一性。
+ */
+internal object MessageIds {
+    private val seq = AtomicLong(0)
+    fun next(): Long = seq.incrementAndGet()
+}
+
 enum class TranslationMode {
     ONE_WAY, // 單向即時同傳口譯 (聽外語 -> 耳機播中文)
     TWO_WAY  // 雙向交談模式 (我說中文對方聽外語，對方說外語我聽中文)
@@ -27,12 +39,27 @@ data class LanguageOption(
 }
 
 data class TranslationMessage(
-    val id: Long = System.currentTimeMillis(),
+    val id: Long = MessageIds.next(),
     val originalText: String,
     val sourceLangName: String,
     val translatedText: String,
     val targetLangName: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    /** 譯文仍為暫定版本（例如繁中尚未由線上通道升級），之後會以同一個 id 覆蓋。 */
+    val isProvisional: Boolean = false
+)
+
+/**
+ * 進行中、尚未定案的字幕，顯示在畫面底部那張固定的卡片上。
+ * 走獨立的 StateFlow 而非 messageFlow：它每秒更新數次，需要的是「永遠只看到最新狀態」，
+ * 而不是一個會漏幀或回放陳舊資料的 SharedFlow。
+ */
+data class InterimSubtitle(
+    val utteranceId: Long,
+    val sourceText: String,
+    val translatedText: String,
+    val sourceLangName: String,
+    val targetLangName: String
 )
 
 data class TranslationResult(

@@ -33,6 +33,7 @@ import com.translator.pocket.databinding.ActivityMainBinding
 import com.translator.pocket.model.AppSettings
 import com.translator.pocket.model.AudioOutputTarget
 import com.translator.pocket.model.EngineType
+import com.translator.pocket.model.InterimSubtitle
 import com.translator.pocket.model.TranslationMode
 import com.translator.pocket.service.LiveTranslationService
 import com.translator.pocket.ui.ChatAdapter
@@ -228,6 +229,7 @@ class MainActivity : AppCompatActivity() {
         binding.btnClear.setOnClickListener {
             chatAdapter.clearMessages()
             binding.layoutEmptyState.visibility = View.VISIBLE
+            binding.layoutLiveCaption.visibility = View.GONE
         }
 
         // 快捷設定 API Key (大按鈕)
@@ -327,12 +329,50 @@ class MainActivity : AppCompatActivity() {
                 }
                 launch {
                     LiveTranslationService.messageFlow.collect { msg ->
-                        chatAdapter.addMessage(msg)
+                        val wasAtBottom = isAtBottom()
+                        // upsert 而非 add：同一個 id 再次送來時就地更新（例如繁中譯文的線上升級）
+                        chatAdapter.upsertMessage(msg)
                         binding.layoutEmptyState.visibility = View.GONE
-                        binding.rvMessages.smoothScrollToPosition(chatAdapter.itemCount - 1)
+                        if (wasAtBottom) scrollToBottom()
+                    }
+                }
+                launch {
+                    LiveTranslationService.interimFlow.collect { interim ->
+                        renderLiveCaption(interim)
                     }
                 }
             }
+        }
+    }
+
+    /** 顯示進行中、尚未定案的字幕。null 代表目前沒有語句在進行。 */
+    private fun renderLiveCaption(interim: InterimSubtitle?) {
+        if (interim == null) {
+            binding.layoutLiveCaption.visibility = View.GONE
+            return
+        }
+        binding.layoutLiveCaption.visibility = View.VISIBLE
+        binding.tvLiveSource.text = interim.sourceText
+        binding.tvLiveTarget.text = interim.translatedText
+    }
+
+    /**
+     * 使用者已經捲上去看歷史時就不要硬把畫面拉回底部。
+     * 落後太多時直接跳，不做動畫 —— 動畫在連續新增時會排隊，看起來像卡住。
+     */
+    private fun isAtBottom(): Boolean {
+        val lm = binding.rvMessages.layoutManager as? LinearLayoutManager ?: return true
+        return lm.findLastVisibleItemPosition() >= chatAdapter.itemCount - 2
+    }
+
+    private fun scrollToBottom() {
+        val lm = binding.rvMessages.layoutManager as? LinearLayoutManager ?: return
+        val last = chatAdapter.itemCount - 1
+        if (last < 0) return
+        if (last - lm.findLastVisibleItemPosition() > 3) {
+            binding.rvMessages.scrollToPosition(last)
+        } else {
+            binding.rvMessages.smoothScrollToPosition(last)
         }
     }
 

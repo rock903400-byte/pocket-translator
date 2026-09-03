@@ -294,6 +294,44 @@
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
+        <!-- Live Caption Card: 進行中、尚未定案的字幕。
+             釘在底部而不是塞進 RecyclerView，避免每秒數次的 notifyItemChanged
+             造成列高跳動與自動捲動跟使用者打架。 -->
+        <LinearLayout
+            android:id="@+id/layoutLiveCaption"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:padding="10dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/tvLiveSource"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:ellipsize="start"
+                android:maxLines="2"
+                android:singleLine="false"
+                android:textColor="@color/text_muted"
+                android:textSize="13sp"
+                tools:text="すみません、駅はどこですか" />
+
+            <TextView
+                android:id="@+id/tvLiveTarget"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:ellipsize="start"
+                android:maxLines="3"
+                android:singleLine="false"
+                android:textColor="@color/primary_accent"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                tools:text="不好意思，請問車站在哪裡" />
+        </LinearLayout>
+
         <!-- Status Indicator -->
         <TextView
             android:id="@+id/tvStatus"

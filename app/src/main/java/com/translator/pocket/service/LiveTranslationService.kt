@@ -29,13 +29,20 @@ import com.translator.pocket.engine.MlKitTranslatorCache
 import com.translator.pocket.model.AppSettings
 import com.translator.pocket.model.AudioOutputTarget
 import com.translator.pocket.model.EngineType
+import com.translator.pocket.model.InterimSubtitle
 import com.translator.pocket.model.TranslationMessage
 import com.translator.pocket.model.TranslationMode
+import com.translator.pocket.subtitle.LiveSubtitleState
+import com.translator.pocket.subtitle.StreamingTranslationPipeline
 import com.translator.pocket.tts.EarphoneTtsManager
 import com.translator.pocket.util.LatencyLog
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -52,6 +59,9 @@ class LiveTranslationService : Service() {
         const val ACTION_STOP = "com.translator.pocket.ACTION_STOP"
         const val ACTION_SWITCH_MODE = "com.translator.pocket.ACTION_SWITCH_MODE"
 
+        /** 沉澱計時器的心跳間隔 */
+        private const val TICK_INTERVAL_MS = 250L
+
         // 全域狀態流，讓 Activity 與 Service 雙向響應
         private val _isRunningFlow = MutableStateFlow(false)
         val isRunningFlow = _isRunningFlow.asStateFlow()
@@ -61,6 +71,14 @@ class LiveTranslationService : Service() {
 
         private val _messageFlow = MutableSharedFlow<TranslationMessage>(extraBufferCapacity = 64)
         val messageFlow = _messageFlow.asSharedFlow()
+
+        /**
+         * 進行中、尚未定案的字幕。null 代表目前沒有進行中的語句。
+         * 用 StateFlow 而非 SharedFlow：它每秒更新數次，收集端需要的是
+         * 「永遠只看到最新狀態」，而不是漏幀或回放一整批陳舊資料。
+         */
+        private val _interimFlow = MutableStateFlow<InterimSubtitle?>(null)
+        val interimFlow = _interimFlow.asStateFlow()
 
         var audioRouterInstance: AudioOutputRouter? = null
             private set
@@ -77,6 +95,13 @@ class LiveTranslationService : Service() {
     private var liveAudioPlayer: LiveAudioTrackPlayer? = null
     private var geminiLiveEngine: GeminiLiveEngine? = null
     private var audioRouter: AudioOutputRouter? = null
+
+    // 即時字幕管線（僅 Google 原生模式使用）
+    private var subtitleState: LiveSubtitleState? = null
+    private var pipeline: StreamingTranslationPipeline? = null
+    private var pipelineScope: CoroutineScope? = null
+    private val tickHandler = Handler(Looper.getMainLooper())
+    private var tickRunnable: Runnable? = null
 
     private lateinit var cloudEngine: CloudAiEngine
     private lateinit var builtinEngine: BuiltinEngine
@@ -230,25 +255,7 @@ class LiveTranslationService : Service() {
 
         // 若為 Google 原生模式：採用流式語音辨識 (同 Google 翻譯 App)
         if (settings.engineType == EngineType.BUILTIN) {
-            googleStreamingRecognizer?.stop()
-            googleStreamingRecognizer = GoogleStreamingRecognizer(
-                context = this,
-                onPartialText = { partial ->
-                    _statusTextFlow.value = "正在聆聽：$partial"
-                },
-                onFinalText = { finalText ->
-                    handleRecognizedText(finalText)
-                },
-                onRmsChanged = { _ -> },
-                onStateChanged = { state ->
-                    _statusTextFlow.value = state
-                }
-            )
-            googleStreamingRecognizer?.start(activeSourceLang)
-            _isRunningFlow.value = true
-            _statusTextFlow.value = "Google 原生流式口譯已啟動 (同 Google 翻譯 App)"
-
-            prepareOfflineTranslation()
+            startStreamingSubtitles()
             return
         }
 
@@ -402,33 +409,122 @@ class LiveTranslationService : Service() {
         }
     }
 
-    private fun handleRecognizedText(originalText: String) {
+    /**
+     * Google 原生模式：串流辨識 -> 增量翻譯 -> 即時字幕 -> 定案朗讀。
+     *
+     * 舊版把 partial 假設丟掉、只在辨識器判定整句結束後才翻譯，
+     * 延遲下限是「講完 + 1.5 秒」。這裡改成邊講邊翻，
+     * 並用自己的沉澱計時器提早定案，不等辨識器的 endpointing。
+     */
+    private fun startStreamingSubtitles() {
+        googleStreamingRecognizer?.stop()
+        stopStreamingSubtitles()
+
+        val state = LiveSubtitleState()
+        subtitleState = state
+
+        // session 級 scope：停止時必須確實砍掉還在飛的翻譯。
+        // 不能用活整個 Service 的 serviceScope，否則按下停止後還會冒出字幕。
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        pipelineScope = scope
+
+        pipeline = StreamingTranslationPipeline(
+            engine = builtinEngine,
+            scope = scope,
+            onInterim = { utteranceId, source, translated ->
+                _interimFlow.value = InterimSubtitle(
+                    utteranceId = utteranceId,
+                    sourceText = source,
+                    translatedText = translated,
+                    sourceLangName = activeSourceLang,
+                    targetLangName = activeTargetLang
+                )
+            },
+            onCommitted = { _, source, translated ->
+                onSegmentCommitted(source, translated)
+            },
+            onInterimCleared = {
+                _interimFlow.value = null
+            }
+        ).apply { setLanguages(activeSourceLang, activeTargetLang) }
+
+        googleStreamingRecognizer = GoogleStreamingRecognizer(
+            context = this,
+            onPartialText = { partial ->
+                LatencyLog.markOnce(LatencyLog.EVENT_FIRST_PARTIAL)
+                pipeline?.submit(state.onPartial(partial, SystemClock.elapsedRealtime()))
+            },
+            onFinalText = { finalText ->
+                pipeline?.submit(state.onFinal(finalText, SystemClock.elapsedRealtime()))
+            },
+            onRmsChanged = { _ -> },
+            onStateChanged = { text ->
+                _statusTextFlow.value = text
+            }
+        )
+        googleStreamingRecognizer?.start(activeSourceLang)
+
+        startSettleTicker()
+
+        _isRunningFlow.value = true
+        _statusTextFlow.value = "Google 原生即時口譯已啟動 (邊講邊譯)"
+        prepareOfflineTranslation()
+    }
+
+    /**
+     * 沉澱計時器心跳。辨識器的 endpointing 常要 1.5~2 秒，
+     * 這裡讓「我們」在對方安靜下來時就先定案。
+     */
+    private fun startSettleTicker() {
+        stopSettleTicker()
+        val runnable = object : Runnable {
+            override fun run() {
+                val state = subtitleState
+                if (state != null && _isRunningFlow.value) {
+                    pipeline?.submit(state.onTick(SystemClock.elapsedRealtime()))
+                    tickHandler.postDelayed(this, TICK_INTERVAL_MS)
+                }
+            }
+        }
+        tickRunnable = runnable
+        tickHandler.postDelayed(runnable, TICK_INTERVAL_MS)
+    }
+
+    private fun stopSettleTicker() {
+        tickRunnable?.let { tickHandler.removeCallbacks(it) }
+        tickRunnable = null
+    }
+
+    /** 一段話定案：進入對話紀錄、更新通知、朗讀。 */
+    private fun onSegmentCommitted(originalText: String, translatedText: String) {
+        if (translatedText.isBlank()) return
+
         serviceScope.launch {
-            _statusTextFlow.value = "即時轉譯中：$originalText"
-
-            val translatedText = builtinEngine.translateText(originalText, activeSourceLang, activeTargetLang)
-            LatencyLog.mark(LatencyLog.EVENT_COMMIT)
-
-            if (translatedText.isNotBlank()) {
-                val message = TranslationMessage(
+            _messageFlow.emit(
+                TranslationMessage(
                     originalText = originalText,
                     sourceLangName = activeSourceLang,
                     translatedText = translatedText,
                     targetLangName = activeTargetLang
                 )
-                _messageFlow.emit(message)
-                updateNotification("口譯：$translatedText")
+            )
+            updateNotification("口譯：$translatedText")
 
-                val target = audioRouter?.activeTargetFlow?.value ?: AudioOutputTarget.AUTO_HEADPHONES
-                if (target != AudioOutputTarget.MUTE) {
-                    if (target == AudioOutputTarget.SPEAKER) {
-                        audioRecorder?.isMutedByPlayback?.set(true)
-                    }
-                    ttsManager?.speak(translatedText)
-                }
-                _statusTextFlow.value = "正在聆聽中... (隨說隨譯)"
+            val target = audioRouter?.activeTargetFlow?.value ?: AudioOutputTarget.AUTO_HEADPHONES
+            if (target != AudioOutputTarget.MUTE) {
+                ttsManager?.speak(translatedText)
             }
         }
+    }
+
+    private fun stopStreamingSubtitles() {
+        stopSettleTicker()
+        pipeline?.close()
+        pipeline = null
+        pipelineScope?.cancel()
+        pipelineScope = null
+        subtitleState = null
+        _interimFlow.value = null
     }
 
     private fun stopForegroundTranslation() {
@@ -437,6 +533,7 @@ class LiveTranslationService : Service() {
 
         googleStreamingRecognizer?.stop()
         googleStreamingRecognizer = null
+        stopStreamingSubtitles()
 
         audioRecorder?.onRawFrameCaptured = null
         audioRecorder?.stopRecording()
