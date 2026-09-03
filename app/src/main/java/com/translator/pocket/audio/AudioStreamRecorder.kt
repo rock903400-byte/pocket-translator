@@ -29,6 +29,8 @@ class AudioStreamRecorder(
     private val scope = CoroutineScope(Dispatchers.IO)
 
     var onRawFrameCaptured: ((ByteArray, Int) -> Unit)? = null
+    val isMutedByPlayback = AtomicBoolean(false)
+    private var echoCanceler: android.media.audiofx.AcousticEchoCanceler? = null
 
     @SuppressLint("MissingPermission")
     fun startRecording(): Boolean {
@@ -57,6 +59,17 @@ class AudioStreamRecorder(
                 return false
             }
 
+            // 嘗試開啟系統硬體迴音消除器 (AEC) 防止喇叭回授
+            if (android.media.audiofx.AcousticEchoCanceler.isAvailable()) {
+                try {
+                    echoCanceler = android.media.audiofx.AcousticEchoCanceler.create(audioRecord!!.audioSessionId)
+                    echoCanceler?.enabled = true
+                    Log.d(TAG, "硬體級 AcousticEchoCanceler 啟動成功")
+                } catch (e: Exception) {
+                    Log.w(TAG, "啟動硬體 AEC 失敗，將依靠軟體自靜音門控", e)
+                }
+            }
+
             audioRecord?.startRecording()
             isRecording.set(true)
             vadSegmenter.reset()
@@ -68,8 +81,11 @@ class AudioStreamRecorder(
                 while (isActive && isRecording.get()) {
                     val bytesRead = audioRecord?.read(buffer, 0, buffer.size) ?: -1
                     if (bytesRead > 0) {
-                        onRawFrameCaptured?.invoke(buffer, bytesRead)
-                        vadSegmenter.processFrame(buffer, bytesRead)
+                        // 若喇叭正在外放朗讀翻譯語音，暫停收集麥克風音訊，徹底杜絕自己錄自己
+                        if (!isMutedByPlayback.get()) {
+                            onRawFrameCaptured?.invoke(buffer, bytesRead)
+                            vadSegmenter.processFrame(buffer, bytesRead)
+                        }
                     } else if (bytesRead < 0) {
                         Log.e(TAG, "AudioRecord 讀取錯誤碼: $bytesRead")
                         break
@@ -102,6 +118,13 @@ class AudioStreamRecorder(
     }
 
     private fun release() {
+        try {
+            echoCanceler?.release()
+        } catch (e: Exception) {
+            // ignore
+        }
+        echoCanceler = null
+
         try {
             audioRecord?.release()
         } catch (e: Exception) {

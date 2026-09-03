@@ -11,6 +11,13 @@ enum class EngineType {
     BUILTIN      // 免費內建模式 (Google 語音辨識 + ML Kit)
 }
 
+enum class AudioOutputTarget {
+    AUTO_HEADPHONES, // 🎧 耳機優先 (藍牙/有線耳機連線時自動優先)
+    EARPIECE,        // 📞 貼耳聽筒私密通話模式 (頂部聽筒 + 距離感測滅屏)
+    SPEAKER,         // 📢 外放揚聲器擴音模式 (底部喇叭 + 防回授自靜音)
+    MUTE             // 🔕 靜音純字幕模式 (完全不發聲)
+}
+
 data class LanguageOption(
     val code: String,       // 例如: "ja", "en", "ko", "zh-TW"
     val displayName: String,// 例如: "日語 (日本語)", "英語 (English)"

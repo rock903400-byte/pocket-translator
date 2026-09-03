@@ -15,6 +15,7 @@ import androidx.core.app.NotificationCompat
 import com.translator.pocket.MainActivity
 import com.translator.pocket.PocketTranslatorApp
 import com.translator.pocket.R
+import com.translator.pocket.audio.AudioOutputRouter
 import com.translator.pocket.audio.AudioStreamRecorder
 import com.translator.pocket.audio.LiveAudioTrackPlayer
 import com.translator.pocket.audio.VadSegmenter
@@ -24,6 +25,7 @@ import com.translator.pocket.engine.CloudAiEngine
 import com.translator.pocket.engine.GeminiLiveEngine
 import com.translator.pocket.engine.ITranslationEngine
 import com.translator.pocket.model.AppSettings
+import com.translator.pocket.model.AudioOutputTarget
 import com.translator.pocket.model.EngineType
 import com.translator.pocket.model.TranslationMessage
 import com.translator.pocket.model.TranslationMode
@@ -31,6 +33,7 @@ import com.translator.pocket.tts.EarphoneTtsManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -55,6 +58,9 @@ class LiveTranslationService : Service() {
 
         private val _messageFlow = MutableSharedFlow<TranslationMessage>(extraBufferCapacity = 64)
         val messageFlow = _messageFlow.asSharedFlow()
+
+        var audioRouterInstance: AudioOutputRouter? = null
+            private set
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -66,6 +72,7 @@ class LiveTranslationService : Service() {
     private var ttsManager: EarphoneTtsManager? = null
     private var liveAudioPlayer: LiveAudioTrackPlayer? = null
     private var geminiLiveEngine: GeminiLiveEngine? = null
+    private var audioRouter: AudioOutputRouter? = null
 
     private lateinit var cloudEngine: CloudAiEngine
     private lateinit var builtinEngine: BuiltinEngine
@@ -86,6 +93,12 @@ class LiveTranslationService : Service() {
         super.onCreate()
         settings = AppSettings(this)
 
+        // 初始化音訊輸出路由 (耳機優先 / 貼耳聽筒 / 外放擴音 / 靜音)
+        audioRouter = AudioOutputRouter(this).apply {
+            setUserPreference(settings.audioOutputPreference)
+        }
+        audioRouterInstance = audioRouter
+
         // 初始化翻譯引擎
         cloudEngine = CloudAiEngine(
             groqApiKeyProvider = { settings.groqApiKey },
@@ -99,7 +112,13 @@ class LiveTranslationService : Service() {
             apiKeyProvider = { settings.geminiApiKey },
             voiceName = settings.geminiLiveVoice,
             onAudioChunkReceived = { pcm24k ->
-                liveAudioPlayer?.playChunk(pcm24k)
+                val target = audioRouter?.activeTargetFlow?.value ?: AudioOutputTarget.AUTO_HEADPHONES
+                if (target != AudioOutputTarget.MUTE) {
+                    if (target == AudioOutputTarget.SPEAKER) {
+                        audioRecorder?.isMutedByPlayback?.set(true)
+                    }
+                    liveAudioPlayer?.playChunk(pcm24k)
+                }
             },
             onTranscriptReceived = { orig, trans ->
                 serviceScope.launch {
@@ -116,14 +135,33 @@ class LiveTranslationService : Service() {
             onConnectionStateChanged = { _, msg ->
                 _statusTextFlow.value = msg
             }
-        )
+        ).apply {
+            onPlaybackStateChanged = { isPlaying ->
+                if (!isPlaying) {
+                    if (audioRouter?.activeTargetFlow?.value == AudioOutputTarget.SPEAKER) {
+                        serviceScope.launch {
+                            delay(350)
+                            audioRecorder?.isMutedByPlayback?.set(false)
+                        }
+                    }
+                }
+            }
+        }
 
-        // 初始化耳機 TTS
+        // 初始化語音朗讀 TTS
         ttsManager = EarphoneTtsManager(this) { isSpeaking ->
             if (isSpeaking) {
-                _statusTextFlow.value = "耳機正在播放翻譯語音..."
-            } else if (_isRunningFlow.value && settings.engineType != EngineType.GEMINI_LIVE) {
-                _statusTextFlow.value = "正在背景聆聽外語對話... (關螢幕依然運作)"
+                _statusTextFlow.value = "正在播放翻譯語音..."
+            } else {
+                if (audioRouter?.activeTargetFlow?.value == AudioOutputTarget.SPEAKER) {
+                    serviceScope.launch {
+                        delay(350)
+                        audioRecorder?.isMutedByPlayback?.set(false)
+                    }
+                }
+                if (_isRunningFlow.value && settings.engineType != EngineType.GEMINI_LIVE) {
+                    _statusTextFlow.value = "正在背景聆聽外語對話... (關螢幕依然運作)"
+                }
             }
         }
     }
@@ -230,8 +268,14 @@ class LiveTranslationService : Service() {
                 // 更新通知列顯示最新翻譯
                 updateNotification("最新翻譯：${result.translatedText}")
 
-                // 在耳機中朗讀
-                ttsManager?.speak(result.translatedText)
+                // 檢查音訊輸出目標 (靜音模式不朗讀)
+                val target = audioRouter?.activeTargetFlow?.value ?: AudioOutputTarget.AUTO_HEADPHONES
+                if (target != AudioOutputTarget.MUTE) {
+                    if (target == AudioOutputTarget.SPEAKER) {
+                        audioRecorder?.isMutedByPlayback?.set(true)
+                    }
+                    ttsManager?.speak(result.translatedText)
+                }
             } else {
                 val errorMsg = result.errorMessage ?: "翻譯無結果"
                 Log.w(TAG, errorMsg)
@@ -350,6 +394,9 @@ class LiveTranslationService : Service() {
         liveAudioPlayer = null
         geminiLiveEngine?.stop()
         geminiLiveEngine = null
+        audioRouter?.release()
+        audioRouter = null
+        audioRouterInstance = null
         super.onDestroy()
     }
 }

@@ -40,6 +40,8 @@ class GeminiLiveEngine(
         .readTimeout(0, TimeUnit.MILLISECONDS) // 保持長連線
         .build()
 
+    var onPlaybackStateChanged: ((Boolean) -> Unit)? = null
+
     private var webSocket: WebSocket? = null
     private val isRunning = AtomicBoolean(false)
     private val isReady = AtomicBoolean(false)
@@ -173,6 +175,7 @@ class GeminiLiveEngine(
                                 val dataBase64 = inlineData.optString("data", "")
                                 if (dataBase64.isNotEmpty()) {
                                     val audioBytes = Base64.decode(dataBase64, Base64.DEFAULT)
+                                    onPlaybackStateChanged?.invoke(true)
                                     onAudioChunkReceived(audioBytes)
                                 }
                             }
@@ -186,9 +189,15 @@ class GeminiLiveEngine(
                     }
                 }
 
+                val turnComplete = serverContent.optBoolean("turnComplete", false)
+                if (turnComplete) {
+                    onPlaybackStateChanged?.invoke(false)
+                }
+
                 // 處理使用者插話 (Barge-in / Interrupted)
                 val interrupted = serverContent.optBoolean("interrupted", false)
                 if (interrupted) {
+                    onPlaybackStateChanged?.invoke(false)
                     Log.d(TAG, "偵測到說話插話 (Barge-in)，Gemini 已即時暫停輸出")
                 }
             }

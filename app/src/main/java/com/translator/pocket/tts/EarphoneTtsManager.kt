@@ -30,9 +30,9 @@ class EarphoneTtsManager(
         if (status == TextToSpeech.SUCCESS) {
             isInitialized.set(true)
             tts?.apply {
-                // 設定音訊屬性為媒體音訊，能精確路由至藍牙耳機 (A2DP) 或有線耳機
+                // 設定音訊屬性為通話/語音屬性，確保能精準由系統路由至聽筒 (Earpiece)、耳機或外放
                 val audioAttributes = AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
                 setAudioAttributes(audioAttributes)

@@ -18,7 +18,19 @@ class AppSettings(context: Context) {
         private const val KEY_TARGET_LANG_INDEX = "target_lang_index"
         private const val KEY_MODE = "translation_mode"
         private const val KEY_GEMINI_LIVE_VOICE = "gemini_live_voice"
+        private const val KEY_AUDIO_OUTPUT = "audio_output_preference"
     }
+
+    var audioOutputPreference: AudioOutputTarget
+        get() {
+            val name = prefs.getString(KEY_AUDIO_OUTPUT, AudioOutputTarget.EARPIECE.name)
+            return try {
+                AudioOutputTarget.valueOf(name ?: AudioOutputTarget.EARPIECE.name)
+            } catch (e: Exception) {
+                AudioOutputTarget.EARPIECE
+            }
+        }
+        set(value) = prefs.edit().putString(KEY_AUDIO_OUTPUT, value.name).apply()
 
     var geminiLiveVoice: String
         get() = prefs.getString(KEY_GEMINI_LIVE_VOICE, "Puck") ?: "Puck"

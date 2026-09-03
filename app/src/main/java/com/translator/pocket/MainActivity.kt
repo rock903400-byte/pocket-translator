@@ -24,8 +24,12 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
+import android.media.AudioDeviceCallback
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import com.translator.pocket.databinding.ActivityMainBinding
 import com.translator.pocket.model.AppSettings
+import com.translator.pocket.model.AudioOutputTarget
 import com.translator.pocket.model.TranslationMode
 import com.translator.pocket.service.LiveTranslationService
 import com.translator.pocket.ui.ChatAdapter
@@ -37,6 +41,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var binding: ActivityMainBinding
     private lateinit var settings: AppSettings
     private lateinit var chatAdapter: ChatAdapter
+
+    private val audioDeviceCallback = object : AudioDeviceCallback() {
+        override fun onAudioDevicesAdded(addedDevices: Array<out AudioDeviceInfo>?) {
+            checkHeadphonesDirectly()
+        }
+
+        override fun onAudioDevicesRemoved(removedDevices: Array<out AudioDeviceInfo>?) {
+            checkHeadphonesDirectly()
+        }
+    }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -58,10 +72,15 @@ class MainActivity : AppCompatActivity() {
         setupRecyclerView()
         setupLanguageSpinners()
         setupModeToggle()
+        setupAudioOutputToggle()
         setupButtons()
         setupStealthMode()
         observeServiceFlows()
         checkPermissions()
+
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager.registerAudioDeviceCallback(audioDeviceCallback, null)
+        checkHeadphonesDirectly()
     }
 
     private fun setupRecyclerView() {
@@ -123,6 +142,52 @@ class MainActivity : AppCompatActivity() {
                     settings.translationMode = TranslationMode.TWO_WAY
                 }
             }
+        }
+    }
+
+    private fun setupAudioOutputToggle() {
+        when (settings.audioOutputPreference) {
+            AudioOutputTarget.EARPIECE -> binding.toggleAudioOutput.check(R.id.btnOutputEarpiece)
+            AudioOutputTarget.SPEAKER -> binding.toggleAudioOutput.check(R.id.btnOutputSpeaker)
+            AudioOutputTarget.MUTE -> binding.toggleAudioOutput.check(R.id.btnOutputMute)
+            else -> binding.toggleAudioOutput.check(R.id.btnOutputEarpiece)
+        }
+
+        binding.toggleAudioOutput.addOnButtonCheckedListener { _, checkedId, isChecked ->
+            if (isChecked) {
+                val target = when (checkedId) {
+                    R.id.btnOutputSpeaker -> AudioOutputTarget.SPEAKER
+                    R.id.btnOutputMute -> AudioOutputTarget.MUTE
+                    else -> AudioOutputTarget.EARPIECE
+                }
+                settings.audioOutputPreference = target
+                LiveTranslationService.audioRouterInstance?.setUserPreference(target)
+            }
+        }
+    }
+
+    private fun checkHeadphonesDirectly() {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        val devices = audioManager.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+        val hasHeadphones = devices.any {
+            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP ||
+            it.type == AudioDeviceInfo.TYPE_BLUETOOTH_SCO ||
+            it.type == AudioDeviceInfo.TYPE_WIRED_HEADSET ||
+            it.type == AudioDeviceInfo.TYPE_WIRED_HEADPHONES ||
+            it.type == AudioDeviceInfo.TYPE_USB_HEADSET
+        }
+        runOnUiThread {
+            updateHeadphonesUi(hasHeadphones)
+        }
+    }
+
+    private fun updateHeadphonesUi(hasHeadphones: Boolean) {
+        if (hasHeadphones) {
+            binding.layoutHeadphonesActive.visibility = View.VISIBLE
+            binding.layoutNoHeadphones.visibility = View.GONE
+        } else {
+            binding.layoutHeadphonesActive.visibility = View.GONE
+            binding.layoutNoHeadphones.visibility = View.VISIBLE
         }
     }
 
@@ -280,5 +345,11 @@ class MainActivity : AppCompatActivity() {
                 .setNegativeButton("稍後再說", null)
                 .show()
         }
+    }
+
+    override fun onDestroy() {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        audioManager.unregisterAudioDeviceCallback(audioDeviceCallback)
+        super.onDestroy()
     }
 }
