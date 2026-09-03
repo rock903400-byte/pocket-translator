@@ -25,12 +25,14 @@ import com.translator.pocket.engine.BuiltinEngine
 import com.translator.pocket.engine.CloudAiEngine
 import com.translator.pocket.engine.GeminiLiveEngine
 import com.translator.pocket.engine.ITranslationEngine
+import com.translator.pocket.engine.MlKitTranslatorCache
 import com.translator.pocket.model.AppSettings
 import com.translator.pocket.model.AudioOutputTarget
 import com.translator.pocket.model.EngineType
 import com.translator.pocket.model.TranslationMessage
 import com.translator.pocket.model.TranslationMode
 import com.translator.pocket.tts.EarphoneTtsManager
+import com.translator.pocket.util.LatencyLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -245,6 +247,8 @@ class LiveTranslationService : Service() {
             googleStreamingRecognizer?.start(activeSourceLang)
             _isRunningFlow.value = true
             _statusTextFlow.value = "Google 原生流式口譯已啟動 (同 Google 翻譯 App)"
+
+            prepareOfflineTranslation()
             return
         }
 
@@ -372,11 +376,38 @@ class LiveTranslationService : Service() {
         updateNotification("已切換為：${if (activeMode == TranslationMode.ONE_WAY) "單向同傳" else "雙向對話"}")
     }
 
+    /**
+     * 預先備妥 ML Kit 端上翻譯模型並暖機。失敗不中止 session ——
+     * BuiltinEngine.translateText 會自動回退到線上免費翻譯通道。
+     */
+    private fun prepareOfflineTranslation() {
+        serviceScope.launch {
+            when (val result = builtinEngine.prepare(activeSourceLang, activeTargetLang) { mb ->
+                _statusTextFlow.value = "首次使用需下載離線語言模型 (約 ${mb}MB)，請稍候..."
+            }) {
+                is MlKitTranslatorCache.Prepare.Ready -> {
+                    Log.d(TAG, "端上翻譯模型已就緒並完成暖機")
+                }
+
+                is MlKitTranslatorCache.Prepare.Failed -> {
+                    Log.w(TAG, "端上模型準備失敗，改用線上翻譯: ${result.reason}")
+                    _statusTextFlow.value = "離線模型無法下載，已改用線上翻譯"
+                }
+
+                is MlKitTranslatorCache.Prepare.Unsupported -> {
+                    Log.w(TAG, "ML Kit 不支援語言: ${result.langCode}，改用線上翻譯")
+                    _statusTextFlow.value = "此語言無離線模型，已改用線上翻譯"
+                }
+            }
+        }
+    }
+
     private fun handleRecognizedText(originalText: String) {
         serviceScope.launch {
             _statusTextFlow.value = "即時轉譯中：$originalText"
 
             val translatedText = builtinEngine.translateText(originalText, activeSourceLang, activeTargetLang)
+            LatencyLog.mark(LatencyLog.EVENT_COMMIT)
 
             if (translatedText.isNotBlank()) {
                 val message = TranslationMessage(
@@ -416,6 +447,8 @@ class LiveTranslationService : Service() {
 
         geminiLiveEngine?.stop()
         liveAudioPlayer?.stop()
+        builtinEngine.release()
+        LatencyLog.reset()
 
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -496,6 +529,7 @@ class LiveTranslationService : Service() {
         liveAudioPlayer = null
         geminiLiveEngine?.stop()
         geminiLiveEngine = null
+        builtinEngine.release()
         audioRouter?.release()
         audioRouter = null
         audioRouterInstance = null

@@ -48,6 +48,11 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        buildConfig = true // LatencyLog 需要 BuildConfig.DEBUG；AGP 8 起預設不產生
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
     }
 }
 

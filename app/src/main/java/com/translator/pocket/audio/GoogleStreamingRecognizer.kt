@@ -9,6 +9,7 @@ import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.util.Log
+import com.translator.pocket.util.LatencyLog
 
 /**
  * Google 原生流式即時語音辨識器 (與 Google 翻譯 App、Pixel 即時字幕同款核心)
@@ -86,6 +87,7 @@ class GoogleStreamingRecognizer(
         }
 
         override fun onBeginningOfSpeech() {
+            LatencyLog.onSpeechStart()
             onStateChanged?.invoke("偵測到語音，正在即時轉譯...")
         }
 

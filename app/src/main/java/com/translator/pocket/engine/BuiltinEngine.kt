@@ -2,21 +2,21 @@ package com.translator.pocket.engine
 
 import android.content.Context
 import android.util.Log
-import com.google.mlkit.nl.translate.TranslateLanguage
-import com.google.mlkit.nl.translate.Translation
-import com.google.mlkit.nl.translate.TranslatorOptions
+import com.translator.pocket.model.LanguageCodes
 import com.translator.pocket.model.TranslationResult
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import java.util.concurrent.TimeUnit
-import kotlin.coroutines.resumeWithException
 
+/**
+ * 免金鑰引擎：Google 原生語音辨識（由 GoogleStreamingRecognizer 負責）搭配翻譯。
+ *
+ * 翻譯優先走 ML Kit 端上模型（離線、低延遲），失敗才回退到 Google 免費翻譯端點。
+ * 端上翻譯器由 [MlKitTranslatorCache] 在整個 session 內保持存活，見該類別的說明。
+ */
 class BuiltinEngine(
     private val context: Context
 ) : ITranslationEngine {
@@ -30,137 +30,78 @@ class BuiltinEngine(
         .readTimeout(8, TimeUnit.SECONDS)
         .build()
 
+    private val translatorCache = MlKitTranslatorCache()
+
+    /**
+     * 在 session 開始時預先備妥語言對的端上模型並暖機。
+     * 回傳 [MlKitTranslatorCache.Prepare.Failed] 時不應中止 session ——
+     * [translateText] 仍會自動回退到線上翻譯。
+     */
+    suspend fun prepare(
+        srcLangCode: String,
+        tgtLangCode: String,
+        onDownloadStarted: (approxMb: Int) -> Unit = {}
+    ): MlKitTranslatorCache.Prepare = translatorCache.prepare(srcLangCode, tgtLangCode, onDownloadStarted)
+
+    /** 釋放端上翻譯器。冪等。 */
+    fun release() {
+        translatorCache.close()
+    }
+
     override suspend fun translateSpeech(
         wavBytes: ByteArray,
         sourceLangCode: String,
         targetLangCode: String
-    ): TranslationResult = withContext(Dispatchers.IO) {
-        try {
-            // 免費語音辨識通道
-            val recognizedText = recognizeSpeechFree(wavBytes, sourceLangCode)
-            if (recognizedText.isNullOrBlank()) {
-                return@withContext TranslationResult(
-                    originalText = "",
-                    translatedText = "",
-                    isSuccess = false,
-                    errorMessage = "⚠️ 免金鑰語音通道維護中。請在設定中切換為【高速 AI 模式】並填入免費的 Groq 或 Gemini Key 即可啟用即時口譯！"
-                )
-            }
-
-            // 免費翻譯：優先使用 Google ML Kit 本地神經網路模型
-            val translated = translateWithMlKit(recognizedText, sourceLangCode, targetLangCode)
-
-            return@withContext TranslationResult(
-                originalText = recognizedText,
-                translatedText = translated,
-                isSuccess = true
-            )
-        } catch (e: Exception) {
-            Log.e(TAG, "內建引擎處理錯誤", e)
-            return@withContext TranslationResult(
-                originalText = "",
-                translatedText = "",
-                isSuccess = false,
-                errorMessage = "內建翻譯錯誤: ${e.message}"
-            )
-        }
+    ): TranslationResult {
+        // 免金鑰模式的語音辨識由系統 SpeechRecognizer 串流完成，不走音訊檔上傳。
+        return TranslationResult(
+            originalText = "",
+            translatedText = "",
+            isSuccess = false,
+            errorMessage = "免金鑰模式不支援音訊檔翻譯，請在設定中選擇【Google 原生流式即時翻譯】，或填入 Groq / Gemini API Key。"
+        )
     }
 
-    private fun recognizeSpeechFree(wavBytes: ByteArray, lang: String): String? {
-        // 使用公開的 Speech-to-Text 轉譯服務
-        try {
-            val url = "https://www.google.com/speech-api/v2/recognize?output=json&lang=$lang&key=AIzaSyA_placeholder"
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("Content-Type", "audio/l16; rate=16000")
-                .post(wavBytes.toRequestBody("audio/l16; rate=16000".toMediaType()))
-                .build()
-
-            // 由於公開端點可能受限，若未成功則由系統辨識器輔助
-            val response = httpClient.newCall(request).execute()
-            val resText = response.body?.string().orEmpty()
-            if (response.isSuccessful && resText.contains("\"transcript\"")) {
-                val lines = resText.split("\n")
-                for (line in lines) {
-                    if (line.contains("transcript")) {
-                        val json = org.json.JSONObject(line)
-                        val result = json.optJSONArray("result")?.optJSONObject(0)
-                        val alternative = result?.optJSONArray("alternative")?.optJSONObject(0)
-                        return alternative?.optString("transcript")
-                    }
-                }
-            }
-        } catch (e: Exception) {
-            Log.w(TAG, "公開語音識別連線通知: ${e.message}")
-        }
-        return null
-    }
-
+    /**
+     * 翻譯一段文字。端上模型優先，不可用時回退線上端點。
+     * 永遠回傳可用的字串（最壞情況是原文），呼叫端不需要處理 null。
+     */
     suspend fun translateText(text: String, srcLang: String, tgtLang: String): String {
-        return translateWithMlKit(text, srcLang, tgtLang)
+        if (text.isBlank()) return text
+
+        translatorCache.translate(text, srcLang, tgtLang)?.let { return it }
+
+        Log.d(TAG, "端上翻譯不可用，改走線上免費通道")
+        return translateFreeOnline(text, srcLang, tgtLang)
     }
 
-    private suspend fun translateWithMlKit(text: String, srcLang: String, tgtLang: String): String {
-        return try {
-            val source = mapToMlKitLang(srcLang)
-            val target = mapToMlKitLang(tgtLang)
+    /**
+     * Google translate_a 免費通道。這是唯一能拿到繁體中文的路徑
+     * （ML Kit 端上模型只有簡體 "zh"）。
+     */
+    suspend fun translateFreeOnline(text: String, src: String, tgt: String): String =
+        withContext(Dispatchers.IO) {
+            try {
+                val encodedText = java.net.URLEncoder.encode(text, "UTF-8")
+                val sl = LanguageCodes.toGtxTag(src)
+                val tl = LanguageCodes.toGtxTag(tgt)
+                val url =
+                    "https://translate.googleapis.com/translate_a/single?client=gtx&sl=$sl&tl=$tl&dt=t&q=$encodedText"
 
-            val options = TranslatorOptions.Builder()
-                .setSourceLanguage(source)
-                .setTargetLanguage(target)
-                .build()
-
-            val translator = Translation.getClient(options)
-            translator.downloadModelIfNeeded().awaitTask()
-            val translated = translator.translate(text).awaitTask()
-            translator.close()
-            translated
-        } catch (e: Exception) {
-            Log.w(TAG, "ML Kit 離線翻譯模型異常，使用線上回退", e)
-            translateFreeOnline(text, srcLang, tgtLang)
-        }
-    }
-
-    private suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitTask(): T =
-        suspendCancellableCoroutine { continuation ->
-            addOnSuccessListener { result -> continuation.resumeWith(Result.success(result)) }
-            addOnFailureListener { exception -> continuation.resumeWithException(exception) }
-        }
-
-    private fun translateFreeOnline(text: String, src: String, tgt: String): String {
-        return try {
-            val encodedText = java.net.URLEncoder.encode(text, "UTF-8")
-            val target = if (tgt == "zh-TW") "zh-TW" else tgt
-            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=$src&tl=$target&dt=t&q=$encodedText"
-
-            val request = Request.Builder().url(url).build()
-            val response = httpClient.newCall(request).execute()
-            val body = response.body?.string().orEmpty()
-            val jsonArray = JSONArray(body)
-            val parts = jsonArray.optJSONArray(0)
-            val sb = StringBuilder()
-            for (i in 0 until (parts?.length() ?: 0)) {
-                val segment = parts?.optJSONArray(i)?.optString(0).orEmpty()
-                sb.append(segment)
+                val request = Request.Builder().url(url).build()
+                val response = httpClient.newCall(request).execute()
+                val body = response.body?.string().orEmpty()
+                val jsonArray = JSONArray(body)
+                val parts = jsonArray.optJSONArray(0)
+                val sb = StringBuilder()
+                for (i in 0 until (parts?.length() ?: 0)) {
+                    val segment = parts?.optJSONArray(i)?.optString(0).orEmpty()
+                    sb.append(segment)
+                }
+                sb.toString().ifEmpty { text }
+            } catch (e: Exception) {
+                Log.w(TAG, "線上免費翻譯失敗: ${e.message}")
+                text
             }
-            sb.toString().ifEmpty { text }
-        } catch (e: Exception) {
-            text
         }
-    }
-
-    private fun mapToMlKitLang(code: String): String {
-        return when (code.lowercase()) {
-            "ja" -> TranslateLanguage.JAPANESE
-            "en" -> TranslateLanguage.ENGLISH
-            "ko" -> TranslateLanguage.KOREAN
-            "zh-tw", "zh" -> TranslateLanguage.CHINESE
-            "de" -> TranslateLanguage.GERMAN
-            "fr" -> TranslateLanguage.FRENCH
-            "es" -> TranslateLanguage.SPANISH
-            "th" -> TranslateLanguage.THAI
-            "vi" -> TranslateLanguage.VIETNAMESE
-            else -> TranslateLanguage.ENGLISH
-        }
-    }
 }
