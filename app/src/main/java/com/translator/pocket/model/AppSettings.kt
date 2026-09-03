@@ -16,31 +16,28 @@ class AppSettings(context: Context) {
         private const val KEY_GEMINI_LIVE_MODEL = "gemini_live_model_name"
         private const val KEY_AUDIO_OUTPUT = "audio_output_preference"
 
-        /** 真實可用的 Live 模型，顯示名「Gemini 3.5 Live Translate」會自動映射至此 */
-        const val DEFAULT_GEMINI_LIVE_MODEL = "gemini-2.0-flash-live-preview-04-09"
+        /** 實測可用的 Live 模型（此 Key 僅支援 bidi 的兩個模型） */
+        const val DEFAULT_GEMINI_LIVE_MODEL = "gemini-2.5-flash-native-audio-latest"
+        const val ALT_LIVE_MODEL = "gemini-3.5-transcribe-live"
 
         /** 將使用者輸入的顯示名/舊幻覺名稱正規化為真實模型 ID */
         fun normalizeLiveModel(raw: String): String {
             val trimmed = raw.trim()
             if (trimmed.isEmpty()) return DEFAULT_GEMINI_LIVE_MODEL
             val lower = trimmed.lowercase()
-            // 1. 顯示名或任何含 3.5 的幻覺名稱 -> 映射至真實 Live 模型
+            // 顯示名「Gemini 3.5 Live Translate」及任何含 3.5 的幻覺名稱 -> 映射至實測可用的 native-audio 模型
             if (lower == "gemini 3.5 live translate" ||
                 lower.contains("gemini 3.5") ||
                 lower.contains("3.5-live-translate") ||
-                lower.contains("3.5 live translate")
+                lower.contains("3.5 live translate") ||
+                lower == "gemini-3.5-live-translate-preview" ||
+                lower == "models/gemini-3.5-live-translate-preview" ||
+                lower == "gemini-2.0-flash-live-preview-04-09" ||
+                lower == "models/gemini-2.0-flash-live-preview-04-09"
             ) {
                 return DEFAULT_GEMINI_LIVE_MODEL
             }
-            // 2. 舊版幻覺 live-translate 但不含 3.5，仍映射至可用的 live 模型
-            if (lower == "gemini-3.5-live-translate-preview" || lower == "models/gemini-3.5-live-translate-preview") {
-                return DEFAULT_GEMINI_LIVE_MODEL
-            }
-            // 3. 含空格的顯示名一律視為使用者誤貼，映射至預設
-            if (trimmed.contains(" ")) {
-                // 若已是合法 model id（含空格不可能），直接映射
-                return DEFAULT_GEMINI_LIVE_MODEL
-            }
+            if (trimmed.contains(" ")) return DEFAULT_GEMINI_LIVE_MODEL
             return trimmed
         }
     }

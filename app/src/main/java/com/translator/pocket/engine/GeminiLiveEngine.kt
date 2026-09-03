@@ -26,8 +26,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Google Gemini Live API (雙向 WebSocket 實時語音串流引擎)
  * 端到端 聲音進 -> 聲音出 (Audio-in -> Audio-out)
  *
- * 顯示名「Gemini 3.5 Live Translate」會自動映射至真實模型 gemini-2.0-flash-live-preview-04-09
- * - 純翻譯模型 (live-translate) 使用 translationConfig，通用 Live 使用 systemInstruction
+ * 顯示名「Gemini 3.5 Live Translate」自動映射至實測可用的 gemini-2.5-flash-native-audio-latest
+ * 經實測此 Key 僅 bidiGenerateContent 的兩個模型：gemini-2.5-flash-native-audio-latest (AUDIO) 與 gemini-3.5-transcribe-live (TEXT)
+ * - native-audio 使用 AUDIO + translationConfig，無需 inputAudioTranscription
  * - 音訊輸入為 realtimeInput.audio (16kHz PCM)，輸出為 24kHz PCM
  * - 伺服器訊息以 binary frame 傳回，內容為 UTF-8 JSON
  */
@@ -42,8 +43,9 @@ class GeminiLiveEngine(
         private const val TAG = "GeminiLiveEngine"
         private const val WS_HOST = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
-        /** 真實可用模型；顯示名「Gemini 3.5 Live Translate」會自動映射至此 */
-        const val DEFAULT_LIVE_MODEL = "gemini-2.0-flash-live-preview-04-09"
+        /** 經此 Key 實測唯一支援 AUDIO bidi 的模型 */
+        const val DEFAULT_LIVE_MODEL = "gemini-2.5-flash-native-audio-latest"
+        const val FALLBACK_LIVE_MODEL = "gemini-3.5-transcribe-live"
 
         /** 兼容顯示名與舊幻覺名稱，確保「Gemini 3.5 Live Translate」也能連線 */
         fun normalizeModelName(raw: String): String {
@@ -55,7 +57,9 @@ class GeminiLiveEngine(
                 lower.contains("3.5-live-translate") ||
                 lower.contains("3.5 live translate") ||
                 lower == "gemini-3.5-live-translate-preview" ||
-                lower == "models/gemini-3.5-live-translate-preview"
+                lower == "models/gemini-3.5-live-translate-preview" ||
+                lower == "gemini-2.0-flash-live-preview-04-09" ||
+                lower == "models/gemini-2.0-flash-live-preview-04-09"
             ) {
                 return DEFAULT_LIVE_MODEL
             }
@@ -227,18 +231,22 @@ class GeminiLiveEngine(
         val finalModel = if (normalized.startsWith("models/")) normalized else "models/$normalized"
         lastAttemptedModel = finalModel
 
-        // gemini-*-live-translate-* 是純翻譯模型：不支援 systemInstruction / speechConfig / 工具，
-        // 多送任何一個欄位伺服器都會直接關閉連線。
-        val isTranslateModel = finalModel.contains("live-translate", ignoreCase = true)
+        // 依實測：native-audio 支援 AUDIO + translationConfig，無需 inputAudioTranscription；transcribe-live 僅支援 TEXT
+        val isNativeAudio = finalModel.contains("native-audio", ignoreCase = true) || finalModel.contains("2.5-flash-native", ignoreCase = true)
+        val isTranscribeLive = finalModel.contains("transcribe-live", ignoreCase = true)
 
+        val responseModality = if (isTranscribeLive) "TEXT" else "AUDIO"
         val generationConfig = JSONObject().apply {
-            put("responseModalities", JSONArray().apply { put("AUDIO") })
-            put("inputAudioTranscription", JSONObject())
-            put("outputAudioTranscription", JSONObject())
-            if (isTranslateModel) {
+            put("responseModalities", JSONArray().apply { put(responseModality) })
+            // 實測：帶 inputAudioTranscription 會 1007 Unknown name，僅 native-audio 的 minimal 才成功
+            if (!isNativeAudio && !isTranscribeLive) {
+                put("inputAudioTranscription", JSONObject())
+                put("outputAudioTranscription", JSONObject())
+            }
+            // native-audio 經實測支援 translationConfig
+            if (isNativeAudio) {
                 put("translationConfig", JSONObject().apply {
                     put("targetLanguageCode", activeTargetLangCode)
-                    put("echoTargetLanguage", false) // 對方已經講目標語言時保持安靜，不要複誦
                 })
             }
         }
@@ -247,8 +255,8 @@ class GeminiLiveEngine(
             put("setup", JSONObject().apply {
                 put("model", finalModel)
                 put("generationConfig", generationConfig)
-                if (!isTranslateModel) {
-                    // 一般 Live 對話模型才吃得下系統指令
+                // transcribe-live 不需要 systemInstruction；native-audio 可選 systemInstruction，但已有 translationConfig 就足夠
+                if (!isNativeAudio && !isTranscribeLive) {
                     put("systemInstruction", JSONObject().apply {
                         put("parts", JSONArray().apply {
                             put(JSONObject().apply {
@@ -260,6 +268,7 @@ class GeminiLiveEngine(
                         })
                     })
                 }
+                // native-audio 若需額外口吻，可在此追加 systemInstruction（translationConfig 已處理語言）
             })
         }
 
