@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class GeminiLiveEngine(
     private val apiKeyProvider: () -> String,
-    private val modelNameProvider: () -> String = { "gemini-3.5-flash" },
+    private val modelNameProvider: () -> String = { "gemini-3.5-live-translate-preview" },
     private val voiceName: String = "Puck",
     private val onAudioChunkReceived: (ByteArray) -> Unit,
     private val onTranscriptReceived: (originalText: String, translatedText: String) -> Unit,
@@ -109,7 +109,11 @@ class GeminiLiveEngine(
     private fun sendSetupMessage(ws: WebSocket) {
         val systemPrompt = "You are an elite real-time simultaneous interpreter. When you receive speech audio in any language, translate it instantaneously and speak it out in fluent, natural, professional Traditional Chinese (Taiwan, 繁體中文). Embody a calm, articulate human interpreter. Never output conversational pleasantries, greetings, or meta commentary. Only speak the exact spoken translation in real time."
 
-        val rawModel = modelNameProvider().trim().ifEmpty { "gemini-3.5-flash" }
+        val inputModel = modelNameProvider().trim().ifEmpty { "gemini-3.5-live-translate-preview" }
+        val rawModel = when {
+            inputModel.contains("live", ignoreCase = true) || inputModel.contains("translate", ignoreCase = true) -> "gemini-3.5-live-translate-preview"
+            else -> inputModel
+        }
         val finalModel = if (rawModel.startsWith("models/")) rawModel else "models/$rawModel"
 
         val setupJson = JSONObject().apply {

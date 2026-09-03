@@ -38,7 +38,7 @@ class AppSettings(context: Context) {
         set(value) = prefs.edit().putString(KEY_GEMINI_LIVE_VOICE, value).apply()
 
     var geminiModelName: String
-        get() = prefs.getString(KEY_GEMINI_MODEL, "gemini-3.5-flash") ?: "gemini-3.5-flash"
+        get() = prefs.getString(KEY_GEMINI_MODEL, "gemini-3.5-live-translate-preview") ?: "gemini-3.5-live-translate-preview"
         set(value) = prefs.edit().putString(KEY_GEMINI_MODEL, value.trim()).apply()
 
     var engineType: EngineType

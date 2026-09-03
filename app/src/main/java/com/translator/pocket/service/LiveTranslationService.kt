@@ -240,10 +240,10 @@ class LiveTranslationService : Service() {
             if (now - lastRmsUpdate > 160L && _isRunningFlow.value) {
                 lastRmsUpdate = now
                 val wave = when {
-                    rms > 600 -> " ▃▅▆█ [聲音宏亮]"
-                    rms > 250 -> " ▃▅▆ [說話中]"
-                    rms > 100 -> " ▃▅ [接收中]"
-                    rms > 30  -> " ▂ [微弱背景音]"
+                    rms > 700 -> " ▃▅▆█ [聲音宏亮]"
+                    rms > 380 -> " ▃▅▆ [說話中]"
+                    rms > 200 -> " ▃▅ [接收中]"
+                    rms > 70  -> " ▂ [環境底噪]"
                     else      -> "   [安靜等待中]"
                 }
                 val currentStatus = _statusTextFlow.value

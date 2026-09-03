@@ -16,7 +16,7 @@ import java.util.concurrent.TimeUnit
 class CloudAiEngine(
     private val groqApiKeyProvider: () -> String,
     private val geminiApiKeyProvider: () -> String,
-    private val geminiModelProvider: () -> String = { "gemini-3.5-flash" }
+    private val geminiModelProvider: () -> String = { "gemini-3.5-live-translate-preview" }
 ) : ITranslationEngine {
 
     companion object {
@@ -272,7 +272,11 @@ class CloudAiEngine(
             })
         }
 
-        val rawModel = geminiModelProvider().trim().ifEmpty { "gemini-3.5-flash" }
+        val inputModel = geminiModelProvider().trim().ifEmpty { "gemini-3.5-live-translate-preview" }
+        val rawModel = when {
+            inputModel.contains("live", ignoreCase = true) || inputModel.contains("translate", ignoreCase = true) -> "gemini-3.5-live-translate-preview"
+            else -> inputModel
+        }
         val modelClean = rawModel.removePrefix("models/")
         val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelClean:generateContent"
 
