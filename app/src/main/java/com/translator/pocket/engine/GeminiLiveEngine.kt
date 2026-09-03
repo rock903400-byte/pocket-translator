@@ -252,10 +252,15 @@ class GeminiLiveEngine(
                 put("inputAudioTranscription", JSONObject())
                 put("outputAudioTranscription", JSONObject())
             }
-            // native-audio 經實測支援 translationConfig
+            // native-audio 經實測支援 translationConfig，並需關閉 thinking 以免 thought 外洩
             if (isNativeAudio) {
                 put("translationConfig", JSONObject().apply {
                     put("targetLanguageCode", activeTargetLangCode)
+                })
+                // 關閉思考痕跡，避免 modelTurn.text 以 thought:true 送出內部推理
+                put("thinkingConfig", JSONObject().apply {
+                    put("thinkingBudget", 0)
+                    put("includeThoughts", false)
                 })
             }
         }
@@ -372,6 +377,11 @@ class GeminiLiveEngine(
                         onAudioChunkReceived(audioBytes)
                     }
 
+                    // 過濾思考痕跡：native-audio 會以 thought:true 送出內部推理，不應顯示為翻譯
+                    if (part.optBoolean("thought", false)) {
+                        Log.d(TAG, "忽略 thought 內容: ${part.optString("text", "").take(120)}")
+                        continue
+                    }
                     val text = part.optString("text", "")
                     if (text.isNotBlank()) {
                         synchronized(transcriptLock) { outputTranscript.append(text) }
