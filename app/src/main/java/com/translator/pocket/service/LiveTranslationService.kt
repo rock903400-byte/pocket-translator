@@ -30,6 +30,7 @@ import com.translator.pocket.model.AppSettings
 import com.translator.pocket.model.AudioOutputTarget
 import com.translator.pocket.model.EngineType
 import com.translator.pocket.model.InterimSubtitle
+import com.translator.pocket.model.LanguageCodes
 import com.translator.pocket.model.TranslationMessage
 import com.translator.pocket.model.TranslationMode
 import com.translator.pocket.subtitle.LiveSubtitleState
@@ -632,25 +633,40 @@ class LiveTranslationService : Service() {
         tickRunnable = null
     }
 
-    /** 一段話定案：進入對話紀錄、更新通知、朗讀。 */
+    /**
+     * 一段話定案：進入對話紀錄、更新通知、朗讀。
+     *
+     * ML Kit 端上模型只有簡體中文，目標語言是繁體時，這裡先立即顯示簡體版本
+     * （不delay任何東西），再另外打線上通道升級成繁體、用同一個訊息 id 換掉那一列。
+     */
     private fun onSegmentCommitted(originalText: String, translatedText: String) {
         if (translatedText.isBlank()) return
 
         serviceScope.launch {
-            _messageFlow.emit(
-                TranslationMessage(
-                    originalText = originalText,
-                    sourceLangName = activeSourceLang,
-                    translatedText = translatedText,
-                    targetLangName = activeTargetLang
-                )
+            val needsTraditionalUpgrade = LanguageCodes.isTraditionalChinese(activeTargetLang)
+
+            val message = TranslationMessage(
+                originalText = originalText,
+                sourceLangName = activeSourceLang,
+                translatedText = translatedText,
+                targetLangName = activeTargetLang,
+                isProvisional = needsTraditionalUpgrade
             )
-            updateNotification("口譯：$translatedText")
+            _messageFlow.emit(message)
+            updateNotification(口譯：)
 
             val target = audioRouter?.activeTargetFlow?.value ?: AudioOutputTarget.AUTO_HEADPHONES
             if (target != AudioOutputTarget.MUTE) {
-                // 串流版本：佇列積太多就跳到最新，避免愈落愈後面
+                // 串流版本：佇列積太多就跳到最新，避免愈落愈後面。
+                // 不等繁體升級 —— 中文 TTS 對簡繁輸入的發音相同，聽感無差。
                 ttsManager?.speakStreaming(translatedText)
+            }
+
+            if (needsTraditionalUpgrade) {
+                val upgraded = builtinEngine.upgradeToTraditionalChinese(originalText, activeSourceLang)
+                if (!upgraded.isNullOrBlank() && upgraded != translatedText) {
+                    _messageFlow.emit(message.copy(translatedText = upgraded, isProvisional = false))
+                }
             }
         }
     }

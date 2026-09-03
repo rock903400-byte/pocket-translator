@@ -10,6 +10,8 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * 免金鑰引擎：Google 原生語音辨識（由 GoogleStreamingRecognizer 負責）搭配翻譯。
@@ -31,6 +33,9 @@ class BuiltinEngine(
         .build()
 
     private val translatorCache = MlKitTranslatorCache()
+
+    private val gtxConsecutiveFailures = AtomicInteger(0)
+    private val gtxUpgradeDisabled = AtomicBoolean(false)
 
     /**
      * 在 session 開始時預先備妥語言對的端上模型並暖機。
@@ -65,6 +70,9 @@ class BuiltinEngine(
     /**
      * 翻譯一段文字。端上模型優先，不可用時回退線上端點。
      * 永遠回傳可用的字串（最壞情況是原文），呼叫端不需要處理 null。
+     *
+     * 注意：目標為繁體中文時，ML Kit 只能給簡體 —— 這裡回傳的就是簡體，
+     * 想要正確的繁體版本要另外呼叫 [upgradeToTraditionalChinese]。
      */
     suspend fun translateText(text: String, srcLang: String, tgtLang: String): String {
         if (text.isBlank()) return text
@@ -76,10 +84,37 @@ class BuiltinEngine(
     }
 
     /**
+     * 把已翻譯的簡體中文升級成繁體。只在目標語言確實是繁體中文時才需要呼叫。
+     *
+     * 回傳 null 代表這次沒有升級成功（含斷路器已跳開的情況）——
+     * 呼叫端應該保留原本的簡體譯文，這只是外觀升級，不值得任何錯誤提示。
+     */
+    suspend fun upgradeToTraditionalChinese(text: String, srcLang: String): String? {
+        if (text.isBlank()) return null
+        if (gtxUpgradeDisabled.get()) return null
+
+        val result = translateFreeOnlineOrNull(text, srcLang, "zh-TW")
+        if (result == null) {
+            if (GtxCircuitBreaker.shouldDisable(gtxConsecutiveFailures.incrementAndGet())) {
+                gtxUpgradeDisabled.set(true)
+                Log.w(TAG, "線上翻譯連續失敗達上限，本 session 停用繁體升級，改用簡體")
+            }
+            return null
+        }
+
+        gtxConsecutiveFailures.set(0)
+        return result
+    }
+
+    /**
      * Google translate_a 免費通道。這是唯一能拿到繁體中文的路徑
-     * （ML Kit 端上模型只有簡體 "zh"）。
+     * （ML Kit 端上模型只有簡體 "zh"）。失敗時回傳原文，呼叫端不需要處理錯誤。
      */
     suspend fun translateFreeOnline(text: String, src: String, tgt: String): String =
+        translateFreeOnlineOrNull(text, src, tgt) ?: text
+
+    /** 同上，但失敗時回傳 null 而不是原文，供斷路器判斷是否真的失敗。 */
+    private suspend fun translateFreeOnlineOrNull(text: String, src: String, tgt: String): String? =
         withContext(Dispatchers.IO) {
             try {
                 val encodedText = java.net.URLEncoder.encode(text, "UTF-8")
@@ -98,10 +133,10 @@ class BuiltinEngine(
                     val segment = parts?.optJSONArray(i)?.optString(0).orEmpty()
                     sb.append(segment)
                 }
-                sb.toString().ifEmpty { text }
+                sb.toString().ifEmpty { null }
             } catch (e: Exception) {
                 Log.w(TAG, "線上免費翻譯失敗: ${e.message}")
-                text
+                null
             }
         }
 }
