@@ -7,23 +7,36 @@ android {
     namespace = "com.translator.pocket"
     compileSdk = 35
 
+    signingConfigs {
+        create("releaseSigning") {
+            storeFile = file("${rootDir}/keystore/pocket_translator.jks")
+            storePassword = "pocket_translator_key_2026"
+            keyAlias = "pocket_key"
+            keyPassword = "pocket_translator_key_2026"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.translator.pocket"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 4
+        versionName = "1.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("releaseSigning")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            signingConfig = signingConfigs.getByName("releaseSigning")
         }
     }
     compileOptions {
