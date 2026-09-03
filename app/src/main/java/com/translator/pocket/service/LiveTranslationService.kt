@@ -16,10 +16,12 @@ import com.translator.pocket.MainActivity
 import com.translator.pocket.PocketTranslatorApp
 import com.translator.pocket.R
 import com.translator.pocket.audio.AudioStreamRecorder
+import com.translator.pocket.audio.LiveAudioTrackPlayer
 import com.translator.pocket.audio.VadSegmenter
 import com.translator.pocket.audio.WavEncoder
 import com.translator.pocket.engine.BuiltinEngine
 import com.translator.pocket.engine.CloudAiEngine
+import com.translator.pocket.engine.GeminiLiveEngine
 import com.translator.pocket.engine.ITranslationEngine
 import com.translator.pocket.model.AppSettings
 import com.translator.pocket.model.EngineType
