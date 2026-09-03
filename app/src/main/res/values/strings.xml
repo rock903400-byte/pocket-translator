@@ -25,8 +25,8 @@
     <string name="settings_title">Gemini Live 設定</string>
     <string name="gemini_api_key_label">Gemini API Key (必填)</string>
     <string name="gemini_api_key_hint">貼上 Gemini 金鑰 (AQ. 或 AIza 開頭皆可)</string>
-    <string name="gemini_model_label">Live 模型名稱 (需為 Live API 專用模型)</string>
-    <string name="gemini_model_hint">gemini-3.5-live-translate-preview (預設)</string>
+    <string name="gemini_model_label">Live 模型名稱</string>
+    <string name="gemini_model_hint">Gemini 3.5 Live Translate（自動對應至 gemini-2.0-flash-live-preview-04-09）</string>
     <string name="groq_api_key_label">Groq API Key</string>
     <string name="groq_api_key_hint">gsk_...</string>
     <string name="save_settings">儲存設定</string>

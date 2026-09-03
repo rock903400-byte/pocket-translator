@@ -26,9 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Google Gemini Live API (雙向 WebSocket 實時語音串流引擎)
  * 端到端 聲音進 -> 聲音出 (Audio-in -> Audio-out)
  *
- * 對應官方 gemini-3.5-live-translate-preview 規格：
- * - setup 只接受 model + generationConfig(responseModalities / inputAudioTranscription /
- *   outputAudioTranscription / translationConfig)，不支援 systemInstruction 與 speechConfig 語音選擇
+ * 顯示名「Gemini 3.5 Live Translate」會自動映射至真實模型 gemini-2.0-flash-live-preview-04-09
+ * - 純翻譯模型 (live-translate) 使用 translationConfig，通用 Live 使用 systemInstruction
  * - 音訊輸入為 realtimeInput.audio (16kHz PCM)，輸出為 24kHz PCM
  * - 伺服器訊息以 binary frame 傳回，內容為 UTF-8 JSON
  */
@@ -43,7 +42,26 @@ class GeminiLiveEngine(
         private const val TAG = "GeminiLiveEngine"
         private const val WS_HOST = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
-        const val DEFAULT_LIVE_MODEL = "gemini-3.5-live-translate-preview"
+        /** 真實可用模型；顯示名「Gemini 3.5 Live Translate」會自動映射至此 */
+        const val DEFAULT_LIVE_MODEL = "gemini-2.0-flash-live-preview-04-09"
+
+        /** 兼容顯示名與舊幻覺名稱，確保「Gemini 3.5 Live Translate」也能連線 */
+        fun normalizeModelName(raw: String): String {
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty()) return DEFAULT_LIVE_MODEL
+            val lower = trimmed.lowercase()
+            if (lower == "gemini 3.5 live translate" ||
+                lower.contains("gemini 3.5") ||
+                lower.contains("3.5-live-translate") ||
+                lower.contains("3.5 live translate") ||
+                lower == "gemini-3.5-live-translate-preview" ||
+                lower == "models/gemini-3.5-live-translate-preview"
+            ) {
+                return DEFAULT_LIVE_MODEL
+            }
+            if (trimmed.contains(" ")) return DEFAULT_LIVE_MODEL
+            return trimmed
+        }
 
         /** 官方建議每次送出 100ms 音訊：16000Hz * 2 bytes * 0.1s */
         private const val SEND_CHUNK_BYTES = 3200
@@ -88,6 +106,7 @@ class GeminiLiveEngine(
     private var reconnectAttempts = 0
 
     private var activeTargetLangCode = "zh-Hant"
+    private var lastAttemptedModel: String = DEFAULT_LIVE_MODEL
 
     /** 累積 20ms 小封包，湊滿 100ms 再送，避免大量微封包拖垮連線 */
     private val pendingAudio = ByteArrayOutputStream(SEND_CHUNK_BYTES * 2)
@@ -113,11 +132,15 @@ class GeminiLiveEngine(
         synchronized(pendingAudio) { pendingAudio.reset() }
         clearTranscripts()
 
-        val url = "$WS_HOST?key=$apiKey"
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("x-goog-api-key", apiKey)
-            .build()
+        val isAqKey = apiKey.startsWith("AQ.", ignoreCase = false)
+        val url = if (isAqKey) WS_HOST else "$WS_HOST?key=$apiKey"
+        val requestBuilder = Request.Builder().url(url)
+        if (isAqKey) {
+            requestBuilder.addHeader("Authorization", "Bearer $apiKey")
+        } else {
+            requestBuilder.addHeader("x-goog-api-key", apiKey)
+        }
+        val request = requestBuilder.build()
 
         onConnectionStateChanged(false, "正在連線至 Gemini Live 同步口譯伺服器...")
 
@@ -183,19 +206,26 @@ class GeminiLiveEngine(
             reason.contains("API key", true)
 
         val shown = if (reason.isBlank()) "伺服器關閉連線 (code $code)" else reason.take(240)
+        val modelInfo = if (lastAttemptedModel.isNotBlank()) " (model=$lastAttemptedModel)" else ""
+        Log.e(TAG, "handleServerClose code=$code reason=$reason model=$lastAttemptedModel")
 
         if (permanent) {
             isRunning.set(false)
-            onConnectionStateChanged(false, "Gemini Live 設定被拒絕：$shown")
+            val hint = if (reason.contains("Unknown name", true) || reason.contains("not found", true)) {
+                " → 請確認模型名稱為 $DEFAULT_LIVE_MODEL（顯示名「Gemini 3.5 Live Translate」已自動映射）"
+            } else ""
+            onConnectionStateChanged(false, "Gemini Live 設定被拒絕：$shown$modelInfo$hint")
         } else {
-            onConnectionStateChanged(false, "Gemini Live 連線中斷 ($code)：$shown")
+            onConnectionStateChanged(false, "Gemini Live 連線中斷 ($code)：$shown$modelInfo")
             if (isRunning.get()) scheduleReconnect()
         }
     }
 
     private fun sendSetupMessage(ws: WebSocket) {
-        val inputModel = modelNameProvider().trim().ifEmpty { DEFAULT_LIVE_MODEL }
-        val finalModel = if (inputModel.startsWith("models/")) inputModel else "models/$inputModel"
+        val rawModel = modelNameProvider().trim().ifEmpty { DEFAULT_LIVE_MODEL }
+        val normalized = normalizeModelName(rawModel)
+        val finalModel = if (normalized.startsWith("models/")) normalized else "models/$normalized"
+        lastAttemptedModel = finalModel
 
         // gemini-*-live-translate-* 是純翻譯模型：不支援 systemInstruction / speechConfig / 工具，
         // 多送任何一個欄位伺服器都會直接關閉連線。
