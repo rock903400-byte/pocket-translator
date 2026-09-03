@@ -5,16 +5,20 @@
     android:id="@+id/rootLayout"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:fitsSystemWindows="true"
     android:background="@color/background_dark">
 
     <!-- Top Bar -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="0dp"
-        android:layout_height="56dp"
+        android:layout_height="wrap_content"
+        android:minHeight="56dp"
         android:gravity="center_vertical"
         android:paddingStart="16dp"
         android:paddingEnd="16dp"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
@@ -242,21 +246,41 @@
         app:layout_constraintTop_toBottomOf="@id/cardControl" />
 
     <!-- Empty State Guide -->
-    <TextView
-        android:id="@+id/tvEmptyState"
+    <LinearLayout
+        android:id="@+id/layoutEmptyState"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:layout_marginStart="32dp"
         android:layout_marginEnd="32dp"
         android:gravity="center"
-        android:lineSpacingExtra="4dp"
-        android:text="💡 點擊下方按鈕開始口譯後\n可隨時按下手機電源鍵【關閉/鎖定螢幕】\n放入口袋中持續在耳機聆聽即時口譯！"
-        android:textColor="@color/text_muted"
-        android:textSize="14sp"
+        android:orientation="vertical"
         app:layout_constraintBottom_toTopOf="@id/layoutBottom"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/cardControl" />
+        app:layout_constraintTop_toBottomOf="@id/cardControl">
+
+        <TextView
+            android:id="@+id/tvEmptyState"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:gravity="center"
+            android:lineSpacingExtra="4dp"
+            android:text="💡 點擊下方按鈕開始口譯後\n可隨時按下手機電源鍵【關閉/鎖定螢幕】\n放入口袋中持續在耳機或聽筒聆聽即時口譯！"
+            android:textColor="@color/text_muted"
+            android:textSize="14sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnQuickApiKey"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:text="🔑 點此設定 API Key (免費取得)"
+            android:textColor="@color/primary_accent"
+            android:textSize="13sp"
+            app:cornerRadius="16dp"
+            app:strokeColor="@color/primary_accent" />
+    </LinearLayout>
 
     <!-- Bottom Controls -->
     <LinearLayout

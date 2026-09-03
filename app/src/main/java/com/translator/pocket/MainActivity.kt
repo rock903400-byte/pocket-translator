@@ -20,6 +20,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -70,6 +72,26 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         settings = AppSettings(this)
+
+        // 動態偵測系統狀態列與導航列安全邊界，徹底防止被電池/訊號/挖孔遮擋
+        ViewCompat.setOnApplyWindowInsetsListener(binding.rootLayout) { _, insets ->
+            val statusBars = insets.getInsets(WindowInsetsCompat.Type.statusBars())
+            val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            binding.topBar.setPadding(
+                binding.topBar.paddingLeft,
+                statusBars.top + 8,
+                binding.topBar.paddingRight,
+                binding.topBar.paddingBottom
+            )
+            binding.layoutBottom.setPadding(
+                binding.layoutBottom.paddingLeft,
+                binding.layoutBottom.paddingTop,
+                binding.layoutBottom.paddingRight,
+                navBars.bottom + 16
+            )
+            insets
+        }
+
         setupRecyclerView()
         setupLanguageSpinners()
         setupModeToggle()
@@ -205,7 +227,15 @@ class MainActivity : AppCompatActivity() {
         // 清空紀錄
         binding.btnClear.setOnClickListener {
             chatAdapter.clearMessages()
-            binding.tvEmptyState.visibility = View.VISIBLE
+            binding.layoutEmptyState.visibility = View.VISIBLE
+        }
+
+        // 快捷設定 API Key (大按鈕)
+        binding.btnQuickApiKey.setOnClickListener {
+            val sheet = SettingsBottomSheet {
+                // 設定變更後重新讀取
+            }
+            sheet.show(supportFragmentManager, "SettingsBottomSheet")
         }
 
         // 設定選單
@@ -298,7 +328,7 @@ class MainActivity : AppCompatActivity() {
                 launch {
                     LiveTranslationService.messageFlow.collect { msg ->
                         chatAdapter.addMessage(msg)
-                        binding.tvEmptyState.visibility = View.GONE
+                        binding.layoutEmptyState.visibility = View.GONE
                         binding.rvMessages.smoothScrollToPosition(chatAdapter.itemCount - 1)
                     }
                 }

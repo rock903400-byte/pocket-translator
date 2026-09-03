@@ -43,7 +43,7 @@ class BuiltinEngine(
                     originalText = "",
                     translatedText = "",
                     isSuccess = false,
-                    errorMessage = "未辨識到清晰語音"
+                    errorMessage = "尚未設定 API Key！請點擊畫面上「🔑 點此設定 API Key」輸入免費金鑰，即可享有極速真人口譯"
                 )
             }
 

@@ -85,6 +85,16 @@
             android:textColor="@color/text_primary"
             android:textColorHint="@color/text_muted"
             android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/btnGetGeminiKey"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="🔗 點此免費取得 Gemini API Key (登入 Google 即可)"
+            android:textColor="@color/primary_accent"
+            android:textSize="12sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
     <!-- Groq API Key Input -->
@@ -115,6 +125,16 @@
             android:textColor="@color/text_primary"
             android:textColorHint="@color/text_muted"
             android:textSize="14sp" />
+
+        <TextView
+            android:id="@+id/btnGetGroqKey"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="🔗 點此免費取得 Groq API Key (14,400次/天 免費額度)"
+            android:textColor="@color/primary_accent"
+            android:textSize="12sp"
+            android:textStyle="bold" />
     </LinearLayout>
 
     <!-- TTS Speech Rate -->

@@ -1,5 +1,7 @@
 package com.translator.pocket.ui
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -59,6 +61,16 @@ class SettingsBottomSheet(
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
         })
+
+        binding.btnGetGeminiKey.setOnClickListener {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://aistudio.google.com/apikey"))
+            startActivity(intent)
+        }
+
+        binding.btnGetGroqKey.setOnClickListener {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://console.groq.com/keys"))
+            startActivity(intent)
+        }
 
         binding.rgEngine.setOnCheckedChangeListener { _, checkedId ->
             updateInputVisibility(checkedId)
