@@ -137,15 +137,12 @@ class GeminiLiveEngine(
         synchronized(pendingAudio) { pendingAudio.reset() }
         clearTranscripts()
 
-        val isAqKey = apiKey.startsWith("AQ.", ignoreCase = false)
-        val url = if (isAqKey) WS_HOST else "$WS_HOST?key=$apiKey"
-        val requestBuilder = Request.Builder().url(url)
-        if (isAqKey) {
-            requestBuilder.addHeader("Authorization", "Bearer $apiKey")
-        } else {
-            requestBuilder.addHeader("x-goog-api-key", apiKey)
-        }
-        val request = requestBuilder.build()
+        // AQ. 與 AIza 皆以 x-goog-api-key + ?key 方式驗證成功（Bearer 會 401/403）
+        val url = "$WS_HOST?key=$apiKey"
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("x-goog-api-key", apiKey)
+            .build()
 
         onConnectionStateChanged(false, "正在連線至 Gemini Live 同步口譯伺服器...")
 
