@@ -131,7 +131,7 @@ class CloudAiEngine(
             )
         }
 
-        // 步驟 2: 調用極速 LLM (llama-3.3-70b-versatile) 翻譯成繁體中文或目標語言
+        // 步驟 2: 調用極速 LLM (優先使用官方標準主力 llama-3.1-8b-instant，並具備多重備援與 Google 翻譯回退)
         val targetName = when (targetLangCode) {
             "zh-TW" -> "Traditional Chinese (繁體中文-台灣)"
             "ja" -> "Japanese (日本語)"
@@ -142,54 +142,96 @@ class CloudAiEngine(
 
         val prompt = "You are an expert real-time simultaneous interpreter. Translate the following text naturally, accurately, and concisely into $targetName. Output ONLY the translated text without explanations, greetings, notes, or quotes:\n\n$recognizedText"
 
-        val chatPayload = JSONObject().apply {
-            put("model", "llama-3.3-70b-versatile")
-            put("temperature", 0.1)
-            put("max_tokens", 300)
-            put("messages", JSONArray().apply {
-                put(JSONObject().apply {
-                    put("role", "system")
-                    put("content", "You are a professional simultaneous interpreter. Output translated text only.")
-                })
-                put(JSONObject().apply {
-                    put("role", "user")
-                    put("content", prompt)
-                })
-            })
+        val candidateModels = listOf(
+            "llama-3.1-8b-instant",
+            "llama3-8b-8192",
+            "llama-3.3-70b-versatile",
+            "llama3-70b-8192"
+        )
+
+        var translatedText: String? = null
+
+        for (modelName in candidateModels) {
+            try {
+                val chatPayload = JSONObject().apply {
+                    put("model", modelName)
+                    put("temperature", 0.1)
+                    put("max_tokens", 300)
+                    put("messages", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "system")
+                            put("content", "You are a professional simultaneous interpreter. Output translated text only.")
+                        })
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("content", prompt)
+                        })
+                    })
+                }
+
+                val chatRequest = Request.Builder()
+                    .url("https://api.groq.com/openai/v1/chat/completions")
+                    .addHeader("Authorization", "Bearer $apiKey")
+                    .addHeader("Content-Type", "application/json")
+                    .post(chatPayload.toString().toRequestBody(MEDIA_TYPE_JSON))
+                    .build()
+
+                val chatResponse = httpClient.newCall(chatRequest).execute()
+                val chatBody = chatResponse.body?.string().orEmpty()
+
+                if (chatResponse.isSuccessful) {
+                    val jsonChat = JSONObject(chatBody)
+                    val choices = jsonChat.optJSONArray("choices")
+                    val content = choices?.optJSONObject(0)
+                        ?.optJSONObject("message")
+                        ?.optString("content", "")
+                        ?.trim()
+                    if (!content.isNullOrEmpty()) {
+                        translatedText = content
+                        break
+                    }
+                } else {
+                    Log.w(TAG, "Groq 模型 $modelName 失敗 (HTTP ${chatResponse.code})，嘗試備援模型...")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Groq 模型 $modelName 連線例外: ${e.message}")
+            }
         }
 
-        val chatRequest = Request.Builder()
-            .url("https://api.groq.com/openai/v1/chat/completions")
-            .addHeader("Authorization", "Bearer $apiKey")
-            .addHeader("Content-Type", "application/json")
-            .post(chatPayload.toString().toRequestBody(MEDIA_TYPE_JSON))
-            .build()
-
-        val chatResponse = httpClient.newCall(chatRequest).execute()
-        val chatBody = chatResponse.body?.string().orEmpty()
-
-        if (!chatResponse.isSuccessful) {
-            Log.e(TAG, "Groq 翻譯錯誤: HTTP ${chatResponse.code} - $chatBody")
-            return TranslationResult(
-                originalText = recognizedText,
-                translatedText = recognizedText, // 降級回傳原文
-                isSuccess = false,
-                errorMessage = "文字翻譯失敗: HTTP ${chatResponse.code}"
-            )
+        // 若所有 Groq 模型均異常，無縫回退至 Google Translate 免費通道
+        if (translatedText.isNullOrBlank()) {
+            Log.w(TAG, "Groq 所有 LLM 均未回應，自動回退 Google Translate 免費通道...")
+            translatedText = fallbackTranslateGoogle(recognizedText, sourceLangCode, targetLangCode)
         }
-
-        val jsonChat = JSONObject(chatBody)
-        val choices = jsonChat.optJSONArray("choices")
-        val translatedText = choices?.optJSONObject(0)
-            ?.optJSONObject("message")
-            ?.optString("content", "")
-            ?.trim() ?: recognizedText
 
         return TranslationResult(
             originalText = recognizedText,
-            translatedText = translatedText,
+            translatedText = translatedText ?: recognizedText,
             isSuccess = true
         )
+    }
+
+    private fun fallbackTranslateGoogle(text: String, src: String, tgt: String): String {
+        return try {
+            val encodedText = java.net.URLEncoder.encode(text, "UTF-8")
+            val target = if (tgt == "zh-TW") "zh-TW" else tgt
+            val url = "https://translate.googleapis.com/translate_a/single?client=gtx&sl=$src&tl=$target&dt=t&q=$encodedText"
+
+            val request = Request.Builder().url(url).build()
+            val response = httpClient.newCall(request).execute()
+            val body = response.body?.string().orEmpty()
+            val jsonArray = JSONArray(body)
+            val parts = jsonArray.optJSONArray(0)
+            val sb = StringBuilder()
+            for (i in 0 until (parts?.length() ?: 0)) {
+                val segment = parts?.optJSONArray(i)?.optString(0).orEmpty()
+                sb.append(segment)
+            }
+            sb.toString().ifEmpty { text }
+        } catch (e: Exception) {
+            Log.w(TAG, "Google 翻譯備援失敗", e)
+            text
+        }
     }
 
     /**
@@ -204,7 +246,7 @@ class CloudAiEngine(
         val base64Audio = android.util.Base64.encodeToString(wavBytes, android.util.Base64.NO_WRAP)
         val targetName = if (targetLangCode == "zh-TW") "繁體中文" else targetLangCode
 
-        val prompt = "請擔任同步口譯員。聽取這段語音，並直接輸出翻譯後的【$targetName】文字。只要輸出翻譯結果，不要包含任何多餘說明。"
+        val prompt = "請擔任專業即時同步口譯員。請聽這段語音，並直接輸出翻譯後的【$targetName】文字。只輸出翻譯結果本身，不要包含引號、說明或問候。"
 
         val payload = JSONObject().apply {
             put("contents", JSONArray().apply {
@@ -226,6 +268,7 @@ class CloudAiEngine(
 
         val request = Request.Builder()
             .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$apiKey")
+            .addHeader("x-goog-api-key", apiKey)
             .post(payload.toString().toRequestBody(MEDIA_TYPE_JSON))
             .build()
 
@@ -233,11 +276,12 @@ class CloudAiEngine(
         val body = response.body?.string().orEmpty()
 
         if (!response.isSuccessful) {
+            Log.e(TAG, "Gemini REST 失敗: HTTP ${response.code} - $body")
             return TranslationResult(
                 originalText = "",
                 translatedText = "",
                 isSuccess = false,
-                errorMessage = "Gemini API 失敗: HTTP ${response.code}"
+                errorMessage = "Gemini API 失敗: HTTP ${response.code} ($body)"
             )
         }
 

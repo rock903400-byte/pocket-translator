@@ -132,8 +132,20 @@ class LiveTranslationService : Service() {
                     updateNotification("Gemini 口譯：$trans")
                 }
             },
-            onConnectionStateChanged = { _, msg ->
+            onConnectionStateChanged = { isConnected, msg ->
                 _statusTextFlow.value = msg
+                if (!isConnected && (msg.contains("失敗") || msg.contains("異常"))) {
+                    serviceScope.launch {
+                        _messageFlow.emit(
+                            TranslationMessage(
+                                originalText = "連線提示",
+                                sourceLangName = "系統",
+                                translatedText = "⚠️ $msg\n💡 建議：若 Live 連線受限，可至設定切換為【高速 AI 模式】，即可使用 Gemini 2.0 Flash 極速口譯！",
+                                targetLangName = "系統"
+                            )
+                        )
+                    }
+                }
             }
         ).apply {
             onPlaybackStateChanged = { isPlaying ->
@@ -213,7 +225,7 @@ class LiveTranslationService : Service() {
 
         // 4. 初始化 VAD 與錄音器
         vadSegmenter = VadSegmenter(settings.vadSensitivity) { pcmBytes ->
-            if (settings.engineType != EngineType.GEMINI_LIVE) {
+            if (settings.engineType != EngineType.GEMINI_LIVE || geminiLiveEngine?.isConnectionReady != true) {
                 handleCapturedSpeech(pcmBytes)
             }
         }
@@ -268,7 +280,7 @@ class LiveTranslationService : Service() {
 
             val wavBytes = WavEncoder.pcmToWav(pcmBytes)
             val hasApiKey = settings.groqApiKey.isNotBlank() || settings.geminiApiKey.isNotBlank()
-            val engine: ITranslationEngine = if (settings.engineType == EngineType.CLOUD_AI && hasApiKey) {
+            val engine: ITranslationEngine = if (hasApiKey) {
                 cloudEngine
             } else {
                 builtinEngine
@@ -302,7 +314,7 @@ class LiveTranslationService : Service() {
                 _statusTextFlow.value = "⚠️ $errorMsg"
 
                 val hint = if (errorMsg.contains("API")) {
-                    "⚠️ 尚未設定 API Key！請點擊右上角 ⚙️ 設定填寫金鑰，或切換為免金鑰模式。"
+                    "⚠️ $errorMsg"
                 } else {
                     "⚠️ 收到語句但未轉譯成功 ($errorMsg)。請稍後再試或更換引擎。"
                 }

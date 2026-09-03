@@ -32,7 +32,7 @@ class GeminiLiveEngine(
     companion object {
         private const val TAG = "GeminiLiveEngine"
         private const val MODEL_NAME = "models/gemini-2.0-flash-exp"
-        private const val WS_HOST = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent"
+        private const val WS_HOST = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
     }
 
     private val client = OkHttpClient.Builder()
@@ -45,6 +45,8 @@ class GeminiLiveEngine(
     private var webSocket: WebSocket? = null
     private val isRunning = AtomicBoolean(false)
     private val isReady = AtomicBoolean(false)
+
+    val isConnectionReady: Boolean get() = isReady.get()
 
     private val scope = CoroutineScope(Dispatchers.IO)
     private var reconnectJob: Job? = null
@@ -67,7 +69,10 @@ class GeminiLiveEngine(
         }
 
         val url = "$WS_HOST?key=$apiKey"
-        val request = Request.Builder().url(url).build()
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("x-goog-api-key", apiKey)
+            .build()
 
         onConnectionStateChanged(false, "正在連線至 Gemini Live 擬真同步口譯伺服器...")
 
@@ -82,9 +87,12 @@ class GeminiLiveEngine(
             }
 
             override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
-                Log.e(TAG, "Gemini Live 連線失敗: ${t.message}", t)
+                val respBody = try { response?.body?.string() } catch (e: Exception) { null }
+                val code = response?.code
+                Log.e(TAG, "Gemini Live 連線失敗: ${t.message}, HTTP: $code, Body: $respBody", t)
                 isReady.set(false)
-                onConnectionStateChanged(false, "連線中斷: ${t.localizedMessage}")
+                val detail = if (code != null) " (HTTP $code: ${respBody ?: t.localizedMessage})" else " (${t.localizedMessage})"
+                onConnectionStateChanged(false, "Gemini Live 連線失敗$detail")
 
                 if (isRunning.get()) {
                     scheduleReconnect()

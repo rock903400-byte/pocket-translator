@@ -43,7 +43,7 @@ class BuiltinEngine(
                     originalText = "",
                     translatedText = "",
                     isSuccess = false,
-                    errorMessage = "尚未設定 API Key！請點擊畫面上「🔑 點此設定 API Key」輸入免費金鑰，即可享有極速真人口譯"
+                    errorMessage = "⚠️ 免金鑰語音通道維護中。請在設定中切換為【高速 AI 模式】並填入免費的 Groq 或 Gemini Key 即可啟用即時口譯！"
                 )
             }
 
