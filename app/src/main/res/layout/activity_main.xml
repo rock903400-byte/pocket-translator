@@ -88,7 +88,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="單向同傳 (耳機)"
+                android:text="即時轉錄 (聽外語)"
                 android:textSize="12sp" />
 
             <Button
@@ -97,7 +97,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="雙向交談 (對話)"
+                android:text="雙向對話"
                 android:textSize="12sp" />
         </com.google.android.material.button.MaterialButtonToggleGroup>
 
@@ -293,6 +293,41 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
+
+        <!-- Conversation turn buttons.
+             SpeechRecognizer 一次只吃一個語言，而且必須在辨識「之前」就決定，
+             所以這裡用明確的輪次按鈕而不是自動語言偵測。 -->
+        <LinearLayout
+            android:id="@+id/layoutConversationControls"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp"
+            android:orientation="horizontal"
+            android:visibility="gone">
+
+            <Button
+                android:id="@+id/btnTurnA"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_button_primary"
+                android:textColor="@color/black"
+                android:textSize="13sp"
+                android:textStyle="bold"
+                tools:text="🎤 日語" />
+
+            <Button
+                android:id="@+id/btnTurnB"
+                android:layout_width="0dp"
+                android:layout_height="48dp"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_card"
+                android:textColor="@color/text_secondary"
+                android:textSize="13sp"
+                tools:text="🎤 繁體中文" />
+        </LinearLayout>
 
         <!-- Live Caption Card: 進行中、尚未定案的字幕。
              釘在底部而不是塞進 RecyclerView，避免每秒數次的 notifyItemChanged

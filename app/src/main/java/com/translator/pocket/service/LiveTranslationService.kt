@@ -59,6 +59,13 @@ class LiveTranslationService : Service() {
         const val ACTION_STOP = "com.translator.pocket.ACTION_STOP"
         const val ACTION_SWITCH_MODE = "com.translator.pocket.ACTION_SWITCH_MODE"
 
+        /** 對話模式：只交換發話方向，不切換 ONE_WAY/TWO_WAY。 */
+        const val ACTION_SWAP_DIRECTION = "com.translator.pocket.ACTION_SWAP_DIRECTION"
+
+        /** 對話模式：明確指定由哪一方發話（輪次按鈕使用，而非按住說話）。 */
+        const val ACTION_SET_TURN = "com.translator.pocket.ACTION_SET_TURN"
+        const val EXTRA_TURN_INDEX = "com.translator.pocket.EXTRA_TURN_INDEX"
+
         /** 沉澱計時器的心跳間隔 */
         private const val TICK_INTERVAL_MS = 250L
 
@@ -115,6 +122,12 @@ class LiveTranslationService : Service() {
     private var activeSourceLang = "ja"
     private var activeTargetLang = "zh-TW"
     private var activeMode = TranslationMode.ONE_WAY
+
+    // 對話模式的兩個固定語言（來自設定的語言選單），與目前由哪一方發話。
+    // activeSourceLang/activeTargetLang 會隨輪次改變，這兩個不會。
+    private var turnLanguageA = "ja"
+    private var turnLanguageB = "zh-TW"
+    private var currentTurnIndex = 0
 
     inner class LocalBinder : Binder() {
         fun getService(): LiveTranslationService = this@LiveTranslationService
@@ -242,6 +255,13 @@ class LiveTranslationService : Service() {
             ACTION_SWITCH_MODE -> {
                 switchTranslationMode()
             }
+            ACTION_SWAP_DIRECTION -> {
+                swapActiveDirection()
+            }
+            ACTION_SET_TURN -> {
+                val index = intent.getIntExtra(EXTRA_TURN_INDEX, 0)
+                setSpeakingTurn(index)
+            }
         }
         return START_STICKY // 系統被強制殺死後自動重啟
     }
@@ -271,6 +291,9 @@ class LiveTranslationService : Service() {
         activeSourceLang = srcLangObj.code
         activeTargetLang = tgtLangObj.code
         activeMode = settings.translationMode
+        turnLanguageA = srcLangObj.code
+        turnLanguageB = tgtLangObj.code
+        currentTurnIndex = 0
 
         ttsManager?.setSpeechRate(settings.ttsSpeed)
         ttsManager?.setLanguage(activeTargetLang)
@@ -389,20 +412,66 @@ class LiveTranslationService : Service() {
     }
 
     private fun switchTranslationMode() {
-        if (activeMode == TranslationMode.ONE_WAY) {
-            activeMode = TranslationMode.TWO_WAY
+        activeMode = if (activeMode == TranslationMode.ONE_WAY) {
+            TranslationMode.TWO_WAY
         } else {
-            activeMode = TranslationMode.ONE_WAY
+            TranslationMode.ONE_WAY
         }
         settings.translationMode = activeMode
+        currentTurnIndex = 0
 
-        // 雙向對話時交換發話與收聽語言
+        updateNotification("已切換為：${if (activeMode == TranslationMode.ONE_WAY) "即時轉錄" else "雙向對話"}")
+    }
+
+    /**
+     * 只交換發話方向，不改變 ONE_WAY/TWO_WAY。
+     * 舊版的 switchTranslationMode 把「切模式」與「交換語言」綁在一起送出，
+     * 導致在對話模式下按一次通知列的交換鈕，模式就被切回單向。
+     */
+    private fun swapActiveDirection() {
+        if (settings.engineType == EngineType.BUILTIN && activeMode == TranslationMode.TWO_WAY) {
+            setSpeakingTurn(1 - currentTurnIndex)
+            return
+        }
+
         val temp = activeSourceLang
         activeSourceLang = activeTargetLang
         activeTargetLang = temp
         ttsManager?.setLanguage(activeTargetLang)
+        updateNotification("已交換發話方向")
+    }
 
-        updateNotification("已切換為：${if (activeMode == TranslationMode.ONE_WAY) "單向同傳" else "雙向對話"}")
+    /**
+     * 對話模式下明確指定由哪一方發話。用鎖定式按鈕而非按住說話 ——
+     * 手機在兩人之間傳遞、或平放在桌上時，按住說話是錯的互動。
+     *
+     * SpeechRecognizer 一次只吃一個語言，判定必須發生在辨識之前，
+     * 所以這裡不做自動語言偵測，只做明確切換。
+     */
+    private fun setSpeakingTurn(index: Int) {
+        if (settings.engineType != EngineType.BUILTIN) return
+        if (!_isRunningFlow.value) return
+        if (index == currentTurnIndex) return
+
+        currentTurnIndex = index
+        if (index == 0) {
+            activeSourceLang = turnLanguageA
+            activeTargetLang = turnLanguageB
+        } else {
+            activeSourceLang = turnLanguageB
+            activeTargetLang = turnLanguageA
+        }
+
+        pipeline?.setLanguages(activeSourceLang, activeTargetLang)
+        subtitleState?.reset()
+        _interimFlow.value = null
+        ttsManager?.setLanguage(activeTargetLang)
+        googleStreamingRecognizer?.setLanguage(activeSourceLang)
+
+        // 兩個方向的模型已在 session 開始時預先下載，這裡通常是瞬間完成
+        prepareOfflineTranslation()
+
+        updateNotification("目前發話方：$activeSourceLang -> $activeTargetLang")
     }
 
     /**
@@ -411,22 +480,33 @@ class LiveTranslationService : Service() {
      */
     private fun prepareOfflineTranslation() {
         serviceScope.launch {
-            when (val result = builtinEngine.prepare(activeSourceLang, activeTargetLang) { mb ->
+            reportPrepareResult(builtinEngine.prepare(activeSourceLang, activeTargetLang) { mb ->
                 _statusTextFlow.value = "首次使用需下載離線語言模型 (約 ${mb}MB)，請稍候..."
-            }) {
-                is MlKitTranslatorCache.Prepare.Ready -> {
-                    Log.d(TAG, "端上翻譯模型已就緒並完成暖機")
-                }
+            })
 
-                is MlKitTranslatorCache.Prepare.Failed -> {
-                    Log.w(TAG, "端上模型準備失敗，改用線上翻譯: ${result.reason}")
-                    _statusTextFlow.value = "離線模型無法下載，已改用線上翻譯"
+            // 對話模式：把反方向的模型也一起準備好，輪次切換才會是瞬間的
+            if (activeMode == TranslationMode.TWO_WAY) {
+                builtinEngine.prepare(activeTargetLang, activeSourceLang) { mb ->
+                    _statusTextFlow.value = "首次使用需下載離線語言模型 (約 ${mb}MB)，請稍候..."
                 }
+            }
+        }
+    }
 
-                is MlKitTranslatorCache.Prepare.Unsupported -> {
-                    Log.w(TAG, "ML Kit 不支援語言: ${result.langCode}，改用線上翻譯")
-                    _statusTextFlow.value = "此語言無離線模型，已改用線上翻譯"
-                }
+    private fun reportPrepareResult(result: MlKitTranslatorCache.Prepare) {
+        when (result) {
+            is MlKitTranslatorCache.Prepare.Ready -> {
+                Log.d(TAG, "端上翻譯模型已就緒並完成暖機")
+            }
+
+            is MlKitTranslatorCache.Prepare.Failed -> {
+                Log.w(TAG, "端上模型準備失敗，改用線上翻譯: ${result.reason}")
+                _statusTextFlow.value = "離線模型無法下載，已改用線上翻譯"
+            }
+
+            is MlKitTranslatorCache.Prepare.Unsupported -> {
+                Log.w(TAG, "ML Kit 不支援語言: ${result.langCode}，改用線上翻譯")
+                _statusTextFlow.value = "此語言無離線模型，已改用線上翻譯"
             }
         }
     }
@@ -651,8 +731,9 @@ class LiveTranslationService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        // 對話模式下交換鈕只切換發話方向；單向模式下切換 轉錄/對話
         val switchIntent = Intent(this, LiveTranslationService::class.java).apply {
-            action = ACTION_SWITCH_MODE
+            action = if (activeMode == TranslationMode.TWO_WAY) ACTION_SWAP_DIRECTION else ACTION_SWITCH_MODE
         }
         val pSwitch = PendingIntent.getService(
             this, 2, switchIntent,

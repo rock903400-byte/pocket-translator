@@ -157,6 +157,7 @@ class MainActivity : AppCompatActivity() {
             TranslationMode.ONE_WAY -> binding.toggleMode.check(R.id.btnModeOneWay)
             TranslationMode.TWO_WAY -> binding.toggleMode.check(R.id.btnModeTwoWay)
         }
+        updateConversationControlsVisibility()
 
         binding.toggleMode.addOnButtonCheckedListener { _, checkedId, isChecked ->
             if (isChecked) {
@@ -165,8 +166,51 @@ class MainActivity : AppCompatActivity() {
                 } else {
                     settings.translationMode = TranslationMode.TWO_WAY
                 }
+                updateConversationControlsVisibility()
             }
         }
+    }
+
+    /**
+     * 對話模式的輪次按鈕。只在 Google 原生模式提供 —— Gemini Live / 高速 AI
+     * 兩個引擎的雙向對話走各自既有的機制，本次重構範圍不動它們。
+     */
+    private fun setupConversationControls() {
+        val srcLang = settings.supportedLanguages.getOrElse(settings.sourceLangIndex) { settings.supportedLanguages[0] }
+        val tgtLang = settings.supportedLanguages.getOrElse(settings.targetLangIndex) { settings.supportedLanguages[3] }
+
+        binding.btnTurnA.text = "🎤 ${srcLang.displayName}"
+        binding.btnTurnB.text = "🎤 ${tgtLang.displayName}"
+
+        binding.btnTurnA.setOnClickListener { setSpeakingTurn(0) }
+        binding.btnTurnB.setOnClickListener { setSpeakingTurn(1) }
+
+        updateTurnButtonStyles(0)
+    }
+
+    private fun setSpeakingTurn(index: Int) {
+        updateTurnButtonStyles(index)
+        val intent = Intent(this, LiveTranslationService::class.java).apply {
+            action = LiveTranslationService.ACTION_SET_TURN
+            putExtra(LiveTranslationService.EXTRA_TURN_INDEX, index)
+        }
+        startService(intent)
+    }
+
+    private fun updateTurnButtonStyles(activeIndex: Int) {
+        binding.btnTurnA.setBackgroundResource(
+            if (activeIndex == 0) R.drawable.bg_button_primary else R.drawable.bg_card
+        )
+        binding.btnTurnB.setBackgroundResource(
+            if (activeIndex == 1) R.drawable.bg_button_primary else R.drawable.bg_card
+        )
+    }
+
+    private fun updateConversationControlsVisibility() {
+        val show = settings.translationMode == TranslationMode.TWO_WAY &&
+            settings.engineType == EngineType.BUILTIN
+        binding.layoutConversationControls.visibility = if (show) View.VISIBLE else View.GONE
+        if (show) setupConversationControls()
     }
 
     private fun setupAudioOutputToggle() {
@@ -235,7 +279,7 @@ class MainActivity : AppCompatActivity() {
         // 快捷設定 API Key (大按鈕)
         binding.btnQuickApiKey.setOnClickListener {
             val sheet = SettingsBottomSheet {
-                // 設定變更後重新讀取
+                updateConversationControlsVisibility()
             }
             sheet.show(supportFragmentManager, "SettingsBottomSheet")
         }
@@ -243,7 +287,7 @@ class MainActivity : AppCompatActivity() {
         // 設定選單
         binding.btnSettings.setOnClickListener {
             val sheet = SettingsBottomSheet {
-                // 設定變更後重新讀取
+                updateConversationControlsVisibility()
             }
             sheet.show(supportFragmentManager, "SettingsBottomSheet")
         }
@@ -385,6 +429,7 @@ class MainActivity : AppCompatActivity() {
             binding.btnSwapLang.isEnabled = false
             binding.btnModeOneWay.isEnabled = false
             binding.btnModeTwoWay.isEnabled = false
+            updateConversationControlsVisibility()
         } else {
             binding.btnToggleTranslation.text = getString(R.string.btn_start_translation)
             binding.btnToggleTranslation.setBackgroundResource(R.drawable.bg_button_primary)
@@ -393,6 +438,7 @@ class MainActivity : AppCompatActivity() {
             binding.btnSwapLang.isEnabled = true
             binding.btnModeOneWay.isEnabled = true
             binding.btnModeTwoWay.isEnabled = true
+            binding.layoutLiveCaption.visibility = View.GONE
         }
     }
 
