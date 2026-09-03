@@ -91,8 +91,9 @@ class GeminiLiveEngine(
     }
 
     private val client = OkHttpClient.Builder()
-        .pingInterval(15, TimeUnit.SECONDS) // 心跳保活
+        .pingInterval(0, TimeUnit.SECONDS) // Live API 伺服器不回 PONG，15s 心跳會導致 1002 斷線，改為禁用
         .readTimeout(0, TimeUnit.MILLISECONDS) // 保持長連線
+        .retryOnConnectionFailure(true)
         .build()
 
     var onPlaybackStateChanged: ((Boolean) -> Unit)? = null
@@ -167,8 +168,19 @@ class GeminiLiveEngine(
                 if (ws !== webSocket) return
                 val respBody = try { response?.body?.string() } catch (e: Exception) { null }
                 val code = response?.code
+                val msg = t.message ?: ""
+                val isPingTimeout = msg.contains("ping", true) && msg.contains("pong", true)
                 Log.e(TAG, "Gemini Live 連線失敗: ${t.message}, HTTP: $code, Body: $respBody", t)
                 isReady.set(false)
+
+                if (isPingTimeout) {
+                    Log.w(TAG, "偵測到 WebSocket ping 超時，已禁用 ping，改為靜默重連")
+                    if (isRunning.get()) {
+                        onConnectionStateChanged(false, "連線保活超時，自動重連中...")
+                        scheduleReconnect()
+                    }
+                    return
+                }
 
                 val detail = if (code != null) {
                     " (HTTP $code: ${respBody?.take(200) ?: t.localizedMessage})"
