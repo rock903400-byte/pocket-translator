@@ -35,11 +35,16 @@ class SettingsBottomSheet(
 
         // 載入當前設定
         when (settings.engineType) {
+            EngineType.GEMINI_LIVE -> binding.rbGeminiLive.isChecked = true
             EngineType.CLOUD_AI -> binding.rbCloudEngine.isChecked = true
             EngineType.BUILTIN -> binding.rbBuiltinEngine.isChecked = true
         }
 
+        binding.etGeminiApiKey.setText(settings.geminiApiKey)
         binding.etGroqApiKey.setText(settings.groqApiKey)
+
+        // 初始可見性
+        updateInputVisibility(binding.rgEngine.checkedRadioButtonId)
 
         // 語速 SeekBar (0 ~ 10 代表 1.0x ~ 1.5x)
         val progress = ((settings.ttsSpeed - 1.0f) / 0.05f).toInt().coerceIn(0, 10)
@@ -56,17 +61,17 @@ class SettingsBottomSheet(
         })
 
         binding.rgEngine.setOnCheckedChangeListener { _, checkedId ->
-            binding.layoutGroqKey.visibility =
-                if (checkedId == R.id.rbCloudEngine) View.VISIBLE else View.GONE
+            updateInputVisibility(checkedId)
         }
 
         binding.btnSaveSettings.setOnClickListener {
-            val selectedEngine = if (binding.rbCloudEngine.isChecked) {
-                EngineType.CLOUD_AI
-            } else {
-                EngineType.BUILTIN
+            val selectedEngine = when {
+                binding.rbGeminiLive.isChecked -> EngineType.GEMINI_LIVE
+                binding.rbCloudEngine.isChecked -> EngineType.CLOUD_AI
+                else -> EngineType.BUILTIN
             }
             settings.engineType = selectedEngine
+            settings.geminiApiKey = binding.etGeminiApiKey.text.toString().trim()
             settings.groqApiKey = binding.etGroqApiKey.text.toString().trim()
 
             val speed = 1.0f + (binding.sbTtsSpeed.progress * 0.05f)
@@ -76,6 +81,13 @@ class SettingsBottomSheet(
             onSettingsSaved()
             dismiss()
         }
+    }
+
+    private fun updateInputVisibility(checkedId: Int) {
+        binding.layoutGeminiKey.visibility =
+            if (checkedId == R.id.rbGeminiLive) View.VISIBLE else View.GONE
+        binding.layoutGroqKey.visibility =
+            if (checkedId == R.id.rbCloudEngine) View.VISIBLE else View.GONE
     }
 
     override fun onDestroyView() {

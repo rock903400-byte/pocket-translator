@@ -17,7 +17,12 @@ class AppSettings(context: Context) {
         private const val KEY_SOURCE_LANG_INDEX = "source_lang_index"
         private const val KEY_TARGET_LANG_INDEX = "target_lang_index"
         private const val KEY_MODE = "translation_mode"
+        private const val KEY_GEMINI_LIVE_VOICE = "gemini_live_voice"
     }
+
+    var geminiLiveVoice: String
+        get() = prefs.getString(KEY_GEMINI_LIVE_VOICE, "Puck") ?: "Puck"
+        set(value) = prefs.edit().putString(KEY_GEMINI_LIVE_VOICE, value).apply()
 
     var engineType: EngineType
         get() {

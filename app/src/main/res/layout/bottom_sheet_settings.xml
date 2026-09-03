@@ -36,10 +36,16 @@
         android:layout_marginTop="6dp">
 
         <RadioButton
+            android:id="@+id/rbGeminiLive"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/engine_gemini_live"
+            android:textColor="@color/text_primary" />
+
+        <RadioButton
             android:id="@+id/rbCloudEngine"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:checked="true"
             android:text="@string/engine_cloud"
             android:textColor="@color/text_primary" />
 
@@ -50,6 +56,36 @@
             android:text="@string/engine_builtin"
             android:textColor="@color/text_primary" />
     </RadioGroup>
+
+    <!-- Gemini Live API Key Input -->
+    <LinearLayout
+        android:id="@+id/layoutGeminiKey"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="12dp"
+        android:orientation="vertical">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/gemini_api_key_label"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/etGeminiApiKey"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="4dp"
+            android:background="@drawable/bg_card"
+            android:hint="@string/gemini_api_key_hint"
+            android:inputType="textPassword"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
+            android:textColor="@color/text_primary"
+            android:textColorHint="@color/text_muted"
+            android:textSize="14sp" />
+    </LinearLayout>
 
     <!-- Groq API Key Input -->
     <LinearLayout

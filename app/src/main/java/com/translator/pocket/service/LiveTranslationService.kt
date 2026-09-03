@@ -62,6 +62,8 @@ class LiveTranslationService : Service() {
     private var audioRecorder: AudioStreamRecorder? = null
     private var vadSegmenter: VadSegmenter? = null
     private var ttsManager: EarphoneTtsManager? = null
+    private var liveAudioPlayer: LiveAudioTrackPlayer? = null
+    private var geminiLiveEngine: GeminiLiveEngine? = null
 
     private lateinit var cloudEngine: CloudAiEngine
     private lateinit var builtinEngine: BuiltinEngine
@@ -89,11 +91,36 @@ class LiveTranslationService : Service() {
         )
         builtinEngine = BuiltinEngine(this)
 
+        // 初始化 Gemini Live 真人雙向音訊串流引擎
+        liveAudioPlayer = LiveAudioTrackPlayer()
+        geminiLiveEngine = GeminiLiveEngine(
+            apiKeyProvider = { settings.geminiApiKey },
+            voiceName = settings.geminiLiveVoice,
+            onAudioChunkReceived = { pcm24k ->
+                liveAudioPlayer?.playChunk(pcm24k)
+            },
+            onTranscriptReceived = { orig, trans ->
+                serviceScope.launch {
+                    val message = TranslationMessage(
+                        originalText = orig,
+                        sourceLangName = activeSourceLang,
+                        translatedText = trans,
+                        targetLangName = activeTargetLang
+                    )
+                    _messageFlow.emit(message)
+                    updateNotification("Gemini 口譯：$trans")
+                }
+            },
+            onConnectionStateChanged = { _, msg ->
+                _statusTextFlow.value = msg
+            }
+        )
+
         // 初始化耳機 TTS
         ttsManager = EarphoneTtsManager(this) { isSpeaking ->
             if (isSpeaking) {
                 _statusTextFlow.value = "耳機正在播放翻譯語音..."
-            } else if (_isRunningFlow.value) {
+            } else if (_isRunningFlow.value && settings.engineType != EngineType.GEMINI_LIVE) {
                 _statusTextFlow.value = "正在背景聆聽外語對話... (關螢幕依然運作)"
             }
         }
@@ -146,15 +173,30 @@ class LiveTranslationService : Service() {
 
         // 4. 初始化 VAD 與錄音器
         vadSegmenter = VadSegmenter(settings.vadSensitivity) { pcmBytes ->
-            handleCapturedSpeech(pcmBytes)
+            if (settings.engineType != EngineType.GEMINI_LIVE) {
+                handleCapturedSpeech(pcmBytes)
+            }
         }
 
         audioRecorder = AudioStreamRecorder(vadSegmenter!!)
+
+        if (settings.engineType == EngineType.GEMINI_LIVE) {
+            liveAudioPlayer?.start()
+            geminiLiveEngine?.start(activeSourceLang, activeTargetLang)
+            audioRecorder?.onRawFrameCaptured = { frame, len ->
+                geminiLiveEngine?.sendAudioFrame(frame, len)
+            }
+        }
+
         val success = audioRecorder?.startRecording() ?: false
 
         if (success) {
             _isRunningFlow.value = true
-            _statusTextFlow.value = "正在背景聆聽外語對話... (關螢幕可持續運作)"
+            if (settings.engineType == EngineType.GEMINI_LIVE) {
+                _statusTextFlow.value = "Gemini Live 擬真同步口譯已啟動 (關螢幕可運作)"
+            } else {
+                _statusTextFlow.value = "正在背景聆聽外語對話... (關螢幕可持續運作)"
+            }
         } else {
             _statusTextFlow.value = "麥克風啟動失敗，請確認錄音權限"
             stopForegroundTranslation()
@@ -217,11 +259,15 @@ class LiveTranslationService : Service() {
         _isRunningFlow.value = false
         _statusTextFlow.value = "口譯已停止"
 
+        audioRecorder?.onRawFrameCaptured = null
         audioRecorder?.stopRecording()
         audioRecorder = null
         vadSegmenter?.reset()
         vadSegmenter = null
         ttsManager?.stop()
+
+        geminiLiveEngine?.stop()
+        liveAudioPlayer?.stop()
 
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
@@ -298,6 +344,10 @@ class LiveTranslationService : Service() {
         stopForegroundTranslation()
         ttsManager?.release()
         ttsManager = null
+        liveAudioPlayer?.stop()
+        liveAudioPlayer = null
+        geminiLiveEngine?.stop()
+        geminiLiveEngine = null
         super.onDestroy()
     }
 }

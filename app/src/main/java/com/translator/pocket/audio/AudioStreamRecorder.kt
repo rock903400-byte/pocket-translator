@@ -28,6 +28,8 @@ class AudioStreamRecorder(
     private var recordingJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.IO)
 
+    var onRawFrameCaptured: ((ByteArray, Int) -> Unit)? = null
+
     @SuppressLint("MissingPermission")
     fun startRecording(): Boolean {
         if (isRecording.get()) return true
@@ -66,6 +68,7 @@ class AudioStreamRecorder(
                 while (isActive && isRecording.get()) {
                     val bytesRead = audioRecord?.read(buffer, 0, buffer.size) ?: -1
                     if (bytesRead > 0) {
+                        onRawFrameCaptured?.invoke(buffer, bytesRead)
                         vadSegmenter.processFrame(buffer, bytesRead)
                     } else if (bytesRead < 0) {
                         Log.e(TAG, "AudioRecord 讀取錯誤碼: $bytesRead")

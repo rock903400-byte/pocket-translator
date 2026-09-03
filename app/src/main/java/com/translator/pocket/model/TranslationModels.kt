@@ -6,8 +6,9 @@ enum class TranslationMode {
 }
 
 enum class EngineType {
-    CLOUD_AI, // Groq Whisper + Gemini/Llama 高速引擎 (0.5s 延遲)
-    BUILTIN   // 免費內建模式 (Google 語音辨識 + ML Kit)
+    GEMINI_LIVE, // Gemini Multimodal Live 真人雙向即時口譯 (Audio-to-Audio)
+    CLOUD_AI,    // Groq Whisper + Llama 高速引擎 (0.5s 延遲)
+    BUILTIN      // 免費內建模式 (Google 語音辨識 + ML Kit)
 }
 
 data class LanguageOption(
