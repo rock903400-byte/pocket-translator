@@ -23,6 +23,7 @@ import com.translator.pocket.engine.GeminiLiveEngine
 import com.translator.pocket.engine.RestTranslator
 import com.translator.pocket.model.AppSettings
 import com.translator.pocket.model.AudioOutputTarget
+import com.translator.pocket.model.InterimPolicy
 import com.translator.pocket.model.InterimSubtitle
 import com.translator.pocket.model.TranslationMessage
 import kotlinx.coroutines.CoroutineScope
@@ -80,6 +81,10 @@ class LiveTranslationService : Service() {
     private var partialInbox: Channel<String>? = null
     private val partialSeq = AtomicLong(0)
     private val transcribeGeneration = AtomicLong(1L)
+
+    /** B 線最後一次狀態（A 線恢復時還原用，避免異常文霸佔狀態列）。 */
+    @Volatile
+    private var lastBStatus = "待命中"
     @Volatile
     private var partialLastSent = ""
     @Volatile
@@ -112,11 +117,34 @@ class LiveTranslationService : Service() {
             apiKeyProvider = { settings.geminiApiKey },
             modelNameProvider = { "gemini-3.5-transcribe-live" },
             onAudioChunkReceived = { },
-            onTranscriptReceived = { _, _, _ -> },
+            // A 線 final（endpoint 全文）：只提前更新原文區，不觸發 commit；
+            // 語句生命週期仍歸 B 線定案所有。
+            onTranscriptReceived = { _, orig, _ ->
+                if (orig.isNotBlank()) {
+                    val gen = transcribeGeneration.get()
+                    val cur = _interimFlow.value
+                    _interimFlow.value = if (cur == null || cur.utteranceId != gen) {
+                        InterimSubtitle(
+                            utteranceId = gen,
+                            sourceText = orig,
+                            translatedText = cur?.translatedText ?: InterimPolicy.TRANSLATING_PLACEHOLDER,
+                            sourceLangName = activeSourceLang,
+                            targetLangName = activeTargetLang
+                        )
+                    } else {
+                        cur.copy(sourceText = orig)
+                    }
+                }
+            },
             onConnectionStateChanged = { isConnected, msg ->
                 if (!isConnected && (msg.contains("失敗") || msg.contains("拒絕") || msg.contains("中斷"))) {
                     _statusTextFlow.value = "即時字幕連線異常（翻譯語音不受影響）：$msg"
                     Log.w(TAG, "transcribe 線異常: $msg")
+                } else if (isConnected) {
+                    // 恢復時把被異常文霸佔的狀態列還給 B 線
+                    InterimPolicy.restoreAfterAnomaly(_statusTextFlow.value, lastBStatus)?.let {
+                        _statusTextFlow.value = it
+                    }
                 }
             },
             onInterimReceived = { _, _, _ -> },
@@ -162,6 +190,7 @@ class LiveTranslationService : Service() {
                 }
             },
             onConnectionStateChanged = { isConnected, msg ->
+                lastBStatus = msg
                 _statusTextFlow.value = msg
                 if (!isConnected && (msg.contains("失敗") || msg.contains("異常") || msg.contains("拒絕") || msg.contains("中斷"))) {
                     serviceScope.launch {
@@ -178,11 +207,19 @@ class LiveTranslationService : Service() {
             },
             onInterimReceived = { id, orig, trans ->
                 // 即時字幕：收到逐字稿立刻顯示，不等 800ms 定案（StateFlow conflated 不怕洗版）
-                // id 與最終 commit 共用，確保「同一句」可追蹤；commit 後 engine 會 +1
+                // id 與最終 commit 共用，確保「同一句」可追蹤；commit 後 engine 會 +1。
+                // 譯文沿用 InterimPolicy：B 還沒譯文時保留畫面上的 REST 暫存，不洗回等待字。
+                val cur = _interimFlow.value
+                val (source, translated) = InterimPolicy.mergeBInterim(
+                    curSource = cur?.sourceText.orEmpty(),
+                    curTrans = cur?.translatedText.orEmpty(),
+                    bOrig = orig,
+                    bTrans = trans
+                )
                 _interimFlow.value = InterimSubtitle(
                     utteranceId = id,
-                    sourceText = orig.ifBlank { "…" },
-                    translatedText = trans.ifBlank { "翻譯中…" },
+                    sourceText = source,
+                    translatedText = translated,
                     sourceLangName = activeSourceLang,
                     targetLangName = activeTargetLang
                 )
