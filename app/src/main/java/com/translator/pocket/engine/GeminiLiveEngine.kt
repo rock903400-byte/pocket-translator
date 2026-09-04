@@ -36,7 +36,8 @@ class GeminiLiveEngine(
     private val modelNameProvider: () -> String = { DEFAULT_LIVE_MODEL },
     private val onAudioChunkReceived: (ByteArray) -> Unit,
     private val onTranscriptReceived: (originalText: String, translatedText: String) -> Unit,
-    private val onConnectionStateChanged: (isConnected: Boolean, message: String) -> Unit
+    private val onConnectionStateChanged: (isConnected: Boolean, message: String) -> Unit,
+    private val onInterimReceived: (originalText: String, translatedText: String) -> Unit = { _, _ -> }
 ) {
     companion object {
         private const val TAG = "GeminiLiveEngine"
@@ -67,11 +68,11 @@ class GeminiLiveEngine(
             return trimmed
         }
 
-        /** 官方建議每次送出 100ms 音訊：16000Hz * 2 bytes * 0.1s */
-        private const val SEND_CHUNK_BYTES = 3200
+        /** 為追趕 Google 翻譯 App 的體感，改為 50ms 聚合（原 100ms）：延遲 -50ms，頻寬略增但可接受 */
+        private const val SEND_CHUNK_BYTES = 1600
 
-        /** 逐字稿在這段時間沒有新增量時，即使沒收到 turnComplete 也先送出字幕 */
-        private const val TRANSCRIPT_FLUSH_DELAY_MS = 2500L
+        /** 逐字稿保險：由 2.5s 縮至 0.8s，字幕更快出現 */
+        private const val TRANSCRIPT_FLUSH_DELAY_MS = 800L
 
         /**
          * App 內部語言代碼 -> Live Translate 支援的 BCP-47 代碼。
@@ -113,7 +114,7 @@ class GeminiLiveEngine(
     private var activeTargetLangCode = "zh-Hant"
     private var lastAttemptedModel: String = DEFAULT_LIVE_MODEL
 
-    /** 累積 20ms 小封包，湊滿 100ms 再送，避免大量微封包拖垮連線 */
+    /** 累積 20ms 小封包，湊滿 50ms 再送，兼顧延遲與封包效率 */
     private val pendingAudio = ByteArrayOutputStream(SEND_CHUNK_BYTES * 2)
 
     private val transcriptLock = Any()
@@ -346,19 +347,21 @@ class GeminiLiveEngine(
 
             val serverContent = root.optJSONObject("serverContent") ?: return
 
-            // 1. 原文逐字稿
+            // 1. 原文逐字稿：收到立刻推 interim，體感接近 Google 翻譯 App
             serverContent.optJSONObject("inputTranscription")?.optString("text")?.let {
                 if (it.isNotEmpty()) {
                     synchronized(transcriptLock) { inputTranscript.append(it) }
                     scheduleTranscriptFlush()
+                    emitInterim()
                 }
             }
 
-            // 2. 翻譯後逐字稿
+            // 2. 翻譯後逐字稿：同上，立刻推 interim
             serverContent.optJSONObject("outputTranscription")?.optString("text")?.let {
                 if (it.isNotEmpty()) {
                     synchronized(transcriptLock) { outputTranscript.append(it) }
                     scheduleTranscriptFlush()
+                    emitInterim()
                 }
             }
 
@@ -384,6 +387,7 @@ class GeminiLiveEngine(
                     if (text.isNotBlank()) {
                         synchronized(transcriptLock) { outputTranscript.append(text) }
                         scheduleTranscriptFlush()
+                        emitInterim()
                     }
                 }
             }
@@ -403,6 +407,23 @@ class GeminiLiveEngine(
             }
         } catch (e: Exception) {
             Log.w(TAG, "解析伺服器訊息錯誤: ${e.message} / ${jsonText.take(200)}")
+        }
+    }
+
+    /** 收到逐字稿立刻快照推 interim（StateFlow 自帶 conflated，不怕洗版） */
+    private fun emitInterim() {
+        val orig: String
+        val trans: String
+        synchronized(transcriptLock) {
+            orig = inputTranscript.toString().trim()
+            trans = outputTranscript.toString().trim()
+        }
+        if (orig.isNotEmpty() || trans.isNotEmpty()) {
+            try {
+                onInterimReceived(orig, trans)
+            } catch (e: Exception) {
+                Log.w(TAG, "emitInterim 例外", e)
+            }
         }
     }
 

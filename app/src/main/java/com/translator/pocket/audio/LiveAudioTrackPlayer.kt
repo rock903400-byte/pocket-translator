@@ -29,7 +29,8 @@ class LiveAudioTrackPlayer(
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT
         )
-        val bufferSize = maxOf(minBufSize, sampleRate * 2 / 5) // 約 200ms 緩衝區，保證不爆音同時低延遲
+        // 低延遲：100ms 緩衝（原 200ms），聲音更快出來；minBuf 保底避免爆音
+        val bufferSize = maxOf(minBufSize, sampleRate / 10 * 2)
 
         try {
             val attributes = AudioAttributes.Builder()
@@ -64,7 +65,12 @@ class LiveAudioTrackPlayer(
             start()
         }
         try {
-            audioTrack?.write(pcmBytes, 0, pcmBytes.size, AudioTrack.WRITE_NON_BLOCKING)
+            // BLOCKING 保證不丟幀（NON_BLOCKING 緩衝滿會靜默丟，聲音斷續體感更慢）
+            // 此處跑在 OkHttp 回調線程，短暫 block 可接受
+            val written = audioTrack?.write(pcmBytes, 0, pcmBytes.size, AudioTrack.WRITE_BLOCKING) ?: -1
+            if (written < 0) {
+                Log.w(TAG, "AudioTrack 寫入返回錯誤碼: $written")
+            }
         } catch (e: Exception) {
             Log.w(TAG, "寫入音訊數據塊異常", e)
         }

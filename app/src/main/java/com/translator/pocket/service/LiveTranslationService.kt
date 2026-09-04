@@ -130,6 +130,16 @@ class LiveTranslationService : Service() {
                         )
                     }
                 }
+            },
+            onInterimReceived = { orig, trans ->
+                // 即時字幕：收到逐字稿立刻顯示，不等 800ms 定案（StateFlow conflated 不怕洗版）
+                _interimFlow.value = InterimSubtitle(
+                    utteranceId = 0L,
+                    sourceText = orig.ifBlank { "…" },
+                    translatedText = trans.ifBlank { "翻譯中…" },
+                    sourceLangName = activeSourceLang,
+                    targetLangName = activeTargetLang
+                )
             }
         ).apply {
             onPlaybackStateChanged = { isPlaying ->
