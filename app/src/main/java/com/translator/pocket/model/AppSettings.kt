@@ -21,9 +21,9 @@ class AppSettings(context: Context) {
         try {
             val masterKeyAlias = MasterKeys.getOrCreate(MasterKeys.AES256_GCM_SPEC)
             EncryptedSharedPreferences.create(
-                appContext,
                 "pocket_translator_secret",
                 masterKeyAlias,
+                appContext,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
             ).also { migratePlaintextKeyIfNeeded(it) }
