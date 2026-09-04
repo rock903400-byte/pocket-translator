@@ -31,8 +31,8 @@ class RestTranslator(
         /** 暫存原文去抖：500ms 內只翻最新一次 */
         const val DEBOUNCE_MS = 500L
 
-        /** 與上次送翻差不到 2 字就不打，省 token */
-        const val MIN_DELTA_CHARS = 2
+        /** 與上次送翻差不到 1 字就不打；中文 1 字即 1 詞， quoting 500ms 去抖已是主要節流 */
+        const val MIN_DELTA_CHARS = 1
 
         private val JSON = "application/json; charset=utf-8".toMediaType()
 

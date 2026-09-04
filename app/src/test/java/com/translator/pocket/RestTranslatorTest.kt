@@ -89,12 +89,12 @@ class RestTranslatorTest {
         assertFalse(RestTranslator.shouldTranslate(1000, 0, "你好", "你好"))
         // 500ms內不打
         assertFalse(RestTranslator.shouldTranslate(1200, 1000, "你好嗎", "你好"))
-        // 差2字以上打
+        // 差1字就打（中文1字即1詞）
         assertTrue(RestTranslator.shouldTranslate(2000, 1000, "你好嗎", "你好"))
         // 變短（修正）打
         assertTrue(RestTranslator.shouldTranslate(2000, 1000, "你", "你好嗎"))
-        // 只差1字不打
-        assertFalse(RestTranslator.shouldTranslate(2000, 1000, "你好呀", "你好嗎"))
+        // 改字修正也重打（譯文要跟著修正）
+        assertTrue(RestTranslator.shouldTranslate(2000, 1000, "你好呀", "你好嗎"))
     }
 
     @Test
