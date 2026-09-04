@@ -103,9 +103,10 @@ class LiveTranslationService : Service() {
                     liveAudioPlayer?.playChunk(pcm24k)
                 }
             },
-            onTranscriptReceived = { orig, trans ->
+            onTranscriptReceived = { id, orig, trans ->
                 serviceScope.launch {
                     val message = TranslationMessage(
+                        id = id,
                         originalText = orig,
                         sourceLangName = activeSourceLang,
                         translatedText = trans,
@@ -131,10 +132,11 @@ class LiveTranslationService : Service() {
                     }
                 }
             },
-            onInterimReceived = { orig, trans ->
+            onInterimReceived = { id, orig, trans ->
                 // 即時字幕：收到逐字稿立刻顯示，不等 800ms 定案（StateFlow conflated 不怕洗版）
+                // id 與最終 commit 共用，確保「同一句」可追蹤；commit 後 engine 會 +1
                 _interimFlow.value = InterimSubtitle(
-                    utteranceId = 0L,
+                    utteranceId = id,
                     sourceText = orig.ifBlank { "…" },
                     translatedText = trans.ifBlank { "翻譯中…" },
                     sourceLangName = activeSourceLang,

@@ -21,6 +21,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Google Gemini Live API (雙向 WebSocket 實時語音串流引擎)
@@ -35,9 +36,9 @@ class GeminiLiveEngine(
     private val apiKeyProvider: () -> String,
     private val modelNameProvider: () -> String = { DEFAULT_LIVE_MODEL },
     private val onAudioChunkReceived: (ByteArray) -> Unit,
-    private val onTranscriptReceived: (originalText: String, translatedText: String) -> Unit,
+    private val onTranscriptReceived: (utteranceId: Long, originalText: String, translatedText: String) -> Unit,
     private val onConnectionStateChanged: (isConnected: Boolean, message: String) -> Unit,
-    private val onInterimReceived: (originalText: String, translatedText: String) -> Unit = { _, _ -> }
+    private val onInterimReceived: (utteranceId: Long, originalText: String, translatedText: String) -> Unit = { _, _, _ -> }
 ) {
     companion object {
         private const val TAG = "GeminiLiveEngine"
@@ -120,6 +121,12 @@ class GeminiLiveEngine(
     private val transcriptLock = Any()
     private val inputTranscript = StringBuilder()
     private val outputTranscript = StringBuilder()
+
+    /**
+     * 語句 ID：interim 與最終 commit 共用同一個 id，UI 才能追蹤「同一句」。
+     * commit 後 +1，connect/stop 清空未定案內容時也 +1 作廢舊 interim，避免重連後 id 碰撞。
+     */
+    private val utteranceId = AtomicLong(1L)
 
     fun start(sourceLang: String, targetLang: String) {
         activeTargetLangCode = toLiveTranslateCode(targetLang)
@@ -412,6 +419,7 @@ class GeminiLiveEngine(
 
     /** 收到逐字稿立刻快照推 interim（StateFlow 自帶 conflated，不怕洗版） */
     private fun emitInterim() {
+        val id = utteranceId.get()
         val orig: String
         val trans: String
         synchronized(transcriptLock) {
@@ -420,7 +428,7 @@ class GeminiLiveEngine(
         }
         if (orig.isNotEmpty() || trans.isNotEmpty()) {
             try {
-                onInterimReceived(orig, trans)
+                onInterimReceived(id, orig, trans)
             } catch (e: Exception) {
                 Log.w(TAG, "emitInterim 例外", e)
             }
@@ -440,6 +448,7 @@ class GeminiLiveEngine(
         flushJob?.cancel()
         flushJob = null
 
+        val id: Long
         val original: String
         val translated: String
         synchronized(transcriptLock) {
@@ -447,10 +456,12 @@ class GeminiLiveEngine(
             translated = outputTranscript.toString().trim()
             inputTranscript.setLength(0)
             outputTranscript.setLength(0)
+            id = utteranceId.getAndIncrement()
         }
 
         if (translated.isNotEmpty() || original.isNotEmpty()) {
             onTranscriptReceived(
+                id,
                 original.ifEmpty { "(語音輸入)" },
                 translated.ifEmpty { "(語音已輸出)" }
             )
@@ -462,6 +473,8 @@ class GeminiLiveEngine(
             inputTranscript.setLength(0)
             outputTranscript.setLength(0)
         }
+        // 作廢飛行中的舊 interim：下一個 interim/commit 必為新 id
+        utteranceId.incrementAndGet()
     }
 
     private fun scheduleReconnect() {
