@@ -1,93 +1,75 @@
 package com.translator.pocket
 
-import com.sun.net.httpserver.HttpServer
 import com.translator.pocket.engine.RestTranslator
 import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.net.InetSocketAddress
-import java.util.concurrent.atomic.AtomicInteger
 
 class RestTranslatorTest {
 
-    private fun okBody(text: String) =
-        """{"candidates":[{"content":{"parts":[{"text":${
-            JSONObjectQuote(text)
-        }}]}}]}"""
+    private fun okBody(text: String): String {
+        val q = "\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        return """{"candidates":[{"content":{"parts":[{"text":$q}]}}]}"""
+    }
 
-    private fun JSONObjectQuote(s: String): String =
-        "\"" + s.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
-
-    private fun server(status: Int, body: String): Pair<HttpServer, String> {
-        val srv = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        srv.createContext("/") { exchange ->
-            val bytes = body.toByteArray(Charsets.UTF_8)
-            exchange.sendResponseHeaders(status, bytes.size.toLong())
-            exchange.responseBody.use { it.write(bytes) }
-        }
-        srv.start()
-        return srv to "http://127.0.0.1:${srv.address.port}"
+    private fun translatorOf(server: MockWebServer): RestTranslator {
+        // MockWebServer 的 url 尾巴是 "/"，去尾後當 baseUrl
+        val base = server.url("/").toString().trimEnd('/')
+        return RestTranslator(apiKeyProvider = { "test-key" }, baseUrl = base)
     }
 
     @Test
     fun `成功回傳譯文`() {
-        val (srv, url) = server(200, okBody("Hello, good"))
+        val server = MockWebServer()
         try {
-            val t = RestTranslator(
-                apiKeyProvider = { "test-key" },
-                baseUrl = url
-            )
-            val result = runBlocking { t.translatePartial("你好", "en") }
+            server.enqueue(MockResponse().setResponseCode(200).setBody(okBody("Hello, good")))
+            val result = runBlocking { translatorOf(server).translatePartial("你好", "en") }
             assertEquals("Hello, good", result)
+            val req = server.takeRequest()
+            assertTrue(req.path!!.contains(":generateContent"))
         } finally {
-            srv.stop(0)
+            server.shutdown()
         }
     }
 
     @Test
     fun `429回null不拋錯`() {
-        val (srv, url) = server(429, "rate limited")
+        val server = MockWebServer()
         try {
-            val t = RestTranslator(apiKeyProvider = { "test-key" }, baseUrl = url)
-            assertNull(runBlocking { t.translatePartial("你好", "en") })
+            server.enqueue(MockResponse().setResponseCode(429).setBody("rate limited"))
+            assertNull(runBlocking { translatorOf(server).translatePartial("你好", "en") })
         } finally {
-            srv.stop(0)
+            server.shutdown()
         }
     }
 
     @Test
     fun `壞JSON回null不拋錯`() {
-        val (srv, url) = server(200, "not json {{{")
+        val server = MockWebServer()
         try {
-            val t = RestTranslator(apiKeyProvider = { "test-key" }, baseUrl = url)
-            assertNull(runBlocking { t.translatePartial("你好", "en") })
+            server.enqueue(MockResponse().setResponseCode(200).setBody("not json {{{"))
+            assertNull(runBlocking { translatorOf(server).translatePartial("你好", "en") })
         } finally {
-            srv.stop(0)
+            server.shutdown()
         }
     }
 
     @Test
     fun `空字與空Key直接回null不打網路`() {
-        val hits = AtomicInteger(0)
-        val srv = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
-        srv.createContext("/") { exchange ->
-            hits.incrementAndGet()
-            exchange.sendResponseHeaders(200, 0)
-            exchange.responseBody.close()
-        }
-        srv.start()
+        val server = MockWebServer()
         try {
-            val url = "http://127.0.0.1:${srv.address.port}"
-            val noKey = RestTranslator(apiKeyProvider = { "" }, baseUrl = url)
+            val noKey = RestTranslator(apiKeyProvider = { "" }, baseUrl = server.url("/").toString().trimEnd('/'))
             assertNull(runBlocking { noKey.translatePartial("你好", "en") })
-            val ok = RestTranslator(apiKeyProvider = { "k" }, baseUrl = url)
+            val ok = translatorOf(server)
             assertNull(runBlocking { ok.translatePartial("   ", "en") })
-            assertEquals(0, hits.get())
+            assertEquals(0, server.requestCount)
         } finally {
-            srv.stop(0)
+            server.shutdown()
         }
     }
 
