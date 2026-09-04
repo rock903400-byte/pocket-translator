@@ -40,8 +40,8 @@ android {
         applicationId = "com.translator.pocket"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "1.4.10"
+        versionCode = 25
+        versionName = "1.5.0-beta"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

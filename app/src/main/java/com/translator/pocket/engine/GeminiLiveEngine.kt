@@ -38,7 +38,12 @@ class GeminiLiveEngine(
     private val onAudioChunkReceived: (ByteArray) -> Unit,
     private val onTranscriptReceived: (utteranceId: Long, originalText: String, translatedText: String) -> Unit,
     private val onConnectionStateChanged: (isConnected: Boolean, message: String) -> Unit,
-    private val onInterimReceived: (utteranceId: Long, originalText: String, translatedText: String) -> Unit = { _, _, _ -> }
+    private val onInterimReceived: (utteranceId: Long, originalText: String, translatedText: String) -> Unit = { _, _, _ -> },
+    /**
+     * transcribe 專用：送音過程中即時滾動的原文暫存（interimInputTranscription）。
+     * live-translate 模型不會送這個欄位，只有 transcribe-live 會，接到就直接推，不經 utteranceId。
+     */
+    private val onTranscribeInterim: (text: String) -> Unit = {}
 ) {
     companion object {
         private const val TAG = "GeminiLiveEngine"
@@ -369,6 +374,17 @@ class GeminiLiveEngine(
                     synchronized(transcriptLock) { outputTranscript.append(it) }
                     scheduleTranscriptFlush()
                     emitInterim()
+                }
+            }
+
+            // 4. transcribe 即時原文暫存：送音過程中逐字長出來，直接推不等定案
+            serverContent.optJSONObject("interimInputTranscription")?.optString("text")?.let {
+                if (it.isNotEmpty()) {
+                    try {
+                        onTranscribeInterim(it)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "onTranscribeInterim 例外", e)
+                    }
                 }
             }
 

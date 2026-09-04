@@ -20,6 +20,7 @@ import com.translator.pocket.audio.AudioOutputRouter
 import com.translator.pocket.audio.AudioStreamRecorder
 import com.translator.pocket.audio.LiveAudioTrackPlayer
 import com.translator.pocket.engine.GeminiLiveEngine
+import com.translator.pocket.engine.RestTranslator
 import com.translator.pocket.model.AppSettings
 import com.translator.pocket.model.AudioOutputTarget
 import com.translator.pocket.model.InterimSubtitle
@@ -28,12 +29,14 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicLong
 
 class LiveTranslationService : Service() {
 
@@ -68,7 +71,19 @@ class LiveTranslationService : Service() {
     private var audioRecorder: AudioStreamRecorder? = null
     private var liveAudioPlayer: LiveAudioTrackPlayer? = null
     private var geminiLiveEngine: GeminiLiveEngine? = null
+    private var transcribeEngine: GeminiLiveEngine? = null
+    private lateinit var restTranslator: RestTranslator
     private var audioRouter: AudioOutputRouter? = null
+
+    // C 線暫存翻譯管線：A 線原文去抖後打 REST，結果只在同語句有效時才顯示
+    private var partialScope: CoroutineScope? = null
+    private var partialInbox: Channel<String>? = null
+    private val partialSeq = AtomicLong(0)
+    private val transcribeGeneration = AtomicLong(1L)
+    @Volatile
+    private var partialLastSent = ""
+    @Volatile
+    private var partialLastSentMs = 0L
 
     private var activeSourceLang = "ja"
     private var activeTargetLang = "zh-TW"
@@ -91,6 +106,33 @@ class LiveTranslationService : Service() {
         audioRouterInstance = audioRouter
 
         liveAudioPlayer = LiveAudioTrackPlayer()
+        restTranslator = RestTranslator(apiKeyProvider = { settings.geminiApiKey })
+        // A 線：transcribe 即時原文（TEXT，只跑字不跑音）。失敗只寫狀態不洗訊息流。
+        transcribeEngine = GeminiLiveEngine(
+            apiKeyProvider = { settings.geminiApiKey },
+            modelNameProvider = { "gemini-3.5-transcribe-live" },
+            onAudioChunkReceived = { },
+            onTranscriptReceived = { _, _, _ -> },
+            onConnectionStateChanged = { isConnected, msg ->
+                if (!isConnected && (msg.contains("失敗") || msg.contains("拒絕") || msg.contains("中斷"))) {
+                    _statusTextFlow.value = "即時字幕連線異常（翻譯語音不受影響）：$msg"
+                    Log.w(TAG, "transcribe 線異常: $msg")
+                }
+            },
+            onInterimReceived = { _, _, _ -> },
+            onTranscribeInterim = { text ->
+                val gen = transcribeGeneration.get()
+                val cur = _interimFlow.value
+                _interimFlow.value = InterimSubtitle(
+                    utteranceId = gen,
+                    sourceText = text,
+                    translatedText = cur?.takeIf { it.utteranceId == gen }?.translatedText ?: "翻譯中…",
+                    sourceLangName = activeSourceLang,
+                    targetLangName = activeTargetLang
+                )
+                partialInbox?.trySend(text)
+            }
+        )
         geminiLiveEngine = GeminiLiveEngine(
             apiKeyProvider = { settings.geminiApiKey },
             modelNameProvider = { settings.geminiLiveModelName },
@@ -114,6 +156,8 @@ class LiveTranslationService : Service() {
                     )
                     _messageFlow.emit(message)
                     _interimFlow.value = null
+                    // 下一句用新 generation，舊的暫存 REST 結果回來直接丟
+                    transcribeGeneration.incrementAndGet()
                     updateNotification("Gemini 口譯：$trans")
                 }
             },
@@ -228,10 +272,16 @@ class LiveTranslationService : Service() {
             }
         }
 
+        startPartialPipeline()
+
         liveAudioPlayer?.start()
         geminiLiveEngine?.start(activeSourceLang, activeTargetLang)
+        transcribeEngine?.start(activeSourceLang, activeTargetLang)
         audioRecorder?.onRawFrameCaptured = { frame, len ->
+            // 同一包同時餵 B 線（翻譯+語音）與 A 線（即時原文）；
+            // sendAudioFrame 內部會拷貝，不會互踩
             geminiLiveEngine?.sendAudioFrame(frame, len)
+            transcribeEngine?.sendAudioFrame(frame, len)
         }
 
         val success = audioRecorder?.startRecording() ?: false
@@ -245,6 +295,54 @@ class LiveTranslationService : Service() {
         }
     }
 
+    /**
+     * C 線：暫存原文去抖後打 REST，結果只在同語句（同 generation、無更新）有效時才顯示。
+     * 任何失敗都靜默略過，原文照滾、B 線照出，暫存譯文寧缺勿錯。
+     */
+    private fun startPartialPipeline() {
+        partialScope?.cancel()
+        partialSeq.set(0)
+        partialLastSent = ""
+        partialLastSentMs = 0L
+        transcribeGeneration.incrementAndGet()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        partialScope = scope
+        val inbox = Channel<String>(Channel.CONFLATED)
+        partialInbox = inbox
+        scope.launch {
+            for (text in inbox) {
+                val mySeq = partialSeq.incrementAndGet()
+                delay(RestTranslator.DEBOUNCE_MS)
+                if (mySeq != partialSeq.get()) continue
+                val gen = transcribeGeneration.get()
+                val snapshot = text.trim()
+                val now = SystemClock.elapsedRealtime()
+                if (!RestTranslator.shouldTranslate(now, partialLastSentMs, snapshot, partialLastSent)) continue
+                partialLastSent = snapshot
+                partialLastSentMs = SystemClock.elapsedRealtime()
+                val translated = restTranslator.translatePartial(snapshot, activeTargetLang)
+                if (mySeq != partialSeq.get() || gen != transcribeGeneration.get()) continue
+                if (!translated.isNullOrBlank()) {
+                    val cur = _interimFlow.value
+                    if (cur != null && cur.utteranceId == gen) {
+                        _interimFlow.value = cur.copy(translatedText = translated)
+                    }
+                }
+            }
+        }
+    }
+
+    private fun stopPartialPipeline() {
+        try {
+            partialInbox?.close()
+        } catch (e: Exception) {
+            // ignore
+        }
+        partialInbox = null
+        partialScope?.cancel()
+        partialScope = null
+    }
+
     private fun stopForegroundTranslation() {
         _isRunningFlow.value = false
         _statusTextFlow.value = "口譯已停止"
@@ -254,6 +352,8 @@ class LiveTranslationService : Service() {
         audioRecorder = null
 
         geminiLiveEngine?.stop()
+        transcribeEngine?.stop()
+        stopPartialPipeline()
         liveAudioPlayer?.stop()
         _interimFlow.value = null
 
@@ -338,6 +438,8 @@ class LiveTranslationService : Service() {
         liveAudioPlayer = null
         geminiLiveEngine?.stop()
         geminiLiveEngine = null
+        transcribeEngine?.stop()
+        transcribeEngine = null
         audioRouter?.release()
         audioRouter = null
         audioRouterInstance = null
