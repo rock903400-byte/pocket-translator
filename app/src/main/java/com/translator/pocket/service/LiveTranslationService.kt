@@ -199,6 +199,7 @@ class LiveTranslationService : Service() {
 
         audioRecorder = AudioStreamRecorder()
         var lastRmsUpdate = 0L
+        var lastQueueLogMs = 0L
         audioRecorder?.onAudioLevelChanged = { rms ->
             val now = System.currentTimeMillis()
             if (now - lastRmsUpdate > 160L && _isRunningFlow.value) {
@@ -210,9 +211,19 @@ class LiveTranslationService : Service() {
                     rms > 70 -> " ▂ [環境底噪]"
                     else -> "   [安靜等待中]"
                 }
+                // 播放儀表：隊列/丟棄數直接進狀態列，卡頓時一眼看出是網路慢還是喇叭跟不上
+                val player = liveAudioPlayer
+                val queueInfo = if (player != null) {
+                    "・播放 ${player.queuedChunks()}/20・丟 ${player.droppedCount()}"
+                } else ""
                 val currentStatus = _statusTextFlow.value
                 if (currentStatus.startsWith("正在背景聆聽") || currentStatus.startsWith("正在聆聽") || currentStatus.contains("[")) {
-                    _statusTextFlow.value = "正在聆聽對話$wave"
+                    _statusTextFlow.value = "正在聆聽對話$wave$queueInfo"
+                }
+                // logcat 每 5 秒一行，供 adb 排查
+                if (now - lastQueueLogMs > 5000L) {
+                    lastQueueLogMs = now
+                    Log.d(TAG, "播放儀表 queued=${player?.queuedChunks() ?: -1} dropped=${player?.droppedCount() ?: -1}")
                 }
             }
         }
