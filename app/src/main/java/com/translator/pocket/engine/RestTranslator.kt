@@ -7,7 +7,6 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 /**
@@ -57,38 +56,68 @@ class RestTranslator(
                 "Output ONLY the translated text, no explanations, no quotes:\n\n$text"
 
         fun buildRequestBody(text: String, targetLangCode: String): String =
-            JSONObject()
-                .put(
-                    "contents",
-                    org.json.JSONArray().put(
-                        JSONObject().put(
-                            "parts",
-                            org.json.JSONArray().put(
-                                JSONObject().put("text", buildPrompt(text, targetLangCode))
-                            )
-                        )
-                    )
-                )
-                .put(
-                    "generationConfig",
-                    JSONObject().put("temperature", 0).put("maxOutputTokens", 256)
-                )
-                .toString()
+            """{"contents":[{"parts":[{"text":${escapeJsonString(buildPrompt(text, targetLangCode))}}]}],""" +
+                """"generationConfig":{"temperature":0,"maxOutputTokens":256}}"""
 
-        /** 成功回譯文，失敗回 null（呼叫端保留上一版）。純函式方便測試。 */
-        fun parseTranslatedText(body: String): String? = try {
-            val text = JSONObject(body)
-                .optJSONArray("candidates")
-                ?.optJSONObject(0)
-                ?.optJSONObject("content")
-                ?.optJSONArray("parts")
-                ?.optJSONObject(0)
-                ?.optString("text", "")
-                .orEmpty()
-                .trim()
-            if (text.isEmpty()) null else text
-        } catch (e: Exception) {
-            null
+        /**
+         * 刻意不用 org.json：它是 Android 樁，JVM 單元測試下所有方法只回預設值。
+         * 回應形狀固定為 candidates[0].content.parts[0].text，抓第一個 "text" 鍵即可。
+         * 成功回譯文，失敗回 null（呼叫端保留上一版）。純函式方便測試。
+         */
+        private val TEXT_VALUE = Regex("\"text\"\\s*:\\s*\"((?:[^\"\\\\]|\\\\.)*)\"")
+
+        fun parseTranslatedText(body: String): String? {
+            val raw = TEXT_VALUE.find(body)?.groupValues?.getOrNull(1) ?: return null
+            val text = unescapeJsonString(raw)?.trim().orEmpty()
+            return if (text.isEmpty()) null else text
+        }
+
+        fun escapeJsonString(s: String): String = buildString(s.length + 2) {
+            append('"')
+            for (c in s) {
+                when (c) {
+                    '"' -> append("\\\"")
+                    '\\' -> append("\\\\")
+                    '\n' -> append("\\n")
+                    '\r' -> append("\\r")
+                    '\t' -> append("\\t")
+                    '\b' -> append("\\b")
+                    '\u000C' -> append("\\f")
+                    else -> if (c < ' ') append("\\u%04x".format(c.code)) else append(c)
+                }
+            }
+            append('"')
+        }
+
+        fun unescapeJsonString(s: String): String? {
+            val out = StringBuilder(s.length)
+            var i = 0
+            while (i < s.length) {
+                val c = s[i]
+                if (c != '\\') {
+                    out.append(c)
+                    i++
+                    continue
+                }
+                if (i + 1 >= s.length) return null
+                when (s[i + 1]) {
+                    '"', '\\', '/' -> out.append(s[i + 1])
+                    'b' -> out.append('\b')
+                    'f' -> out.append('\u000C')
+                    'n' -> out.append('\n')
+                    'r' -> out.append('\r')
+                    't' -> out.append('\t')
+                    'u' -> {
+                        if (i + 5 >= s.length) return null
+                        val code = s.substring(i + 2, i + 6).toIntOrNull(16) ?: return null
+                        out.append(code.toChar())
+                        i += 4
+                    }
+                    else -> return null
+                }
+                i += 2
+            }
+            return out.toString()
         }
 
         /** 去抖決策：夠久且差夠多字才打。純函式方便測試。 */

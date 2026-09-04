@@ -103,4 +103,21 @@ class RestTranslatorTest {
         assertTrue(p.contains("你好"))
         assertTrue(p.contains("English"))
     }
+
+    @Test
+    fun `escape與unescape往返`() {
+        val raw = "他說：「你好\"\n換行\\斜線"
+        val escaped = RestTranslator.escapeJsonString(raw)
+        assertTrue(escaped.startsWith("\"") && escaped.endsWith("\""))
+        assertEquals(raw, RestTranslator.unescapeJsonString(escaped.substring(1, escaped.length - 1)))
+    }
+
+    @Test
+    fun `requestBody是合法JSON且含prompt`() {
+        val body = RestTranslator.buildRequestBody("你好\"引號\"", "zh-Hant")
+        assertTrue(body.contains("generationConfig"))
+        assertTrue(body.contains("Traditional Chinese"))
+        // 引號必須被跳脫，否則送出即 400
+        assertTrue(body.contains("\\\"引號\\\""))
+    }
 }
