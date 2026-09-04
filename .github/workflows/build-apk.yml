@@ -32,9 +32,17 @@ jobs:
 
       - name: Run Unit Tests
         run: gradle test --stacktrace
+        env:
+          POCKET_STORE_PASSWORD: ${{ secrets.POCKET_STORE_PASSWORD }}
+          POCKET_KEY_ALIAS: ${{ secrets.POCKET_KEY_ALIAS }}
+          POCKET_KEY_PASSWORD: ${{ secrets.POCKET_KEY_PASSWORD }}
 
       - name: Build Debug APK
         run: gradle assembleDebug --stacktrace
+        env:
+          POCKET_STORE_PASSWORD: ${{ secrets.POCKET_STORE_PASSWORD }}
+          POCKET_KEY_ALIAS: ${{ secrets.POCKET_KEY_ALIAS }}
+          POCKET_KEY_PASSWORD: ${{ secrets.POCKET_KEY_PASSWORD }}
 
       - name: Rename APK for Easy Identification
         run: |
