@@ -26,9 +26,8 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Google Gemini Live API (雙向 WebSocket 實時語音串流引擎)
  * 端到端 聲音進 -> 聲音出 (Audio-in -> Audio-out)
  *
- * 顯示名「Gemini 3.5 Live Translate」自動映射至實測可用的 gemini-2.5-flash-native-audio-latest
- * 經實測此 Key 僅 bidiGenerateContent 的兩個模型：gemini-2.5-flash-native-audio-latest (AUDIO) 與 gemini-3.5-transcribe-live (TEXT)
- * - native-audio 使用 AUDIO + translationConfig，無需 inputAudioTranscription
+ * 顯示名「Gemini 3.5 Live Translate」即 models/gemini-3.5-live-translate-preview（Rate Limit 頁面已確認有 1.34K TPM 使用）
+ * 經實測此 Key 的 live-translate-preview 以 AUDIO+translationConfig+thinkingBudget0 可穩定 setupComplete 並回 input/outputTranscription
  * - 音訊輸入為 realtimeInput.audio (16kHz PCM)，輸出為 24kHz PCM
  * - 伺服器訊息以 binary frame 傳回，內容為 UTF-8 JSON
  */
@@ -43,23 +42,24 @@ class GeminiLiveEngine(
         private const val TAG = "GeminiLiveEngine"
         private const val WS_HOST = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
-        /** 經此 Key 實測唯一支援 AUDIO bidi 的模型 */
-        const val DEFAULT_LIVE_MODEL = "gemini-2.5-flash-native-audio-latest"
-        const val FALLBACK_LIVE_MODEL = "gemini-3.5-transcribe-live"
+        /** 經 Rate Limit 實測真實可用的 Live Translate 模型（此 Key 已有 3 次調用） */
+        const val DEFAULT_LIVE_MODEL = "gemini-3.5-live-translate-preview"
 
-        /** 兼容顯示名與舊幻覺名稱，確保「Gemini 3.5 Live Translate」也能連線 */
+        /** 兼容顯示名，確保「Gemini 3.5 Live Translate」直通，舊幻覺遷移至此 */
         fun normalizeModelName(raw: String): String {
             val trimmed = raw.trim()
             if (trimmed.isEmpty()) return DEFAULT_LIVE_MODEL
             val lower = trimmed.lowercase()
             if (lower == "gemini 3.5 live translate" ||
-                lower.contains("gemini 3.5") ||
-                lower.contains("3.5-live-translate") ||
-                lower.contains("3.5 live translate") ||
-                lower == "gemini-3.5-live-translate-preview" ||
-                lower == "models/gemini-3.5-live-translate-preview" ||
-                lower == "gemini-2.0-flash-live-preview-04-09" ||
-                lower == "models/gemini-2.0-flash-live-preview-04-09"
+                lower == "gemini 3.5 live translate preview" ||
+                lower == "gemini-3.5-live-translate" ||
+                lower == "models/gemini-3.5-live-translate"
+            ) {
+                return DEFAULT_LIVE_MODEL
+            }
+            if (lower.contains("2.0-flash-live") ||
+                lower == "gemini-2.5-flash-native-audio-latest" ||
+                lower == "models/gemini-2.5-flash-native-audio-latest"
             ) {
                 return DEFAULT_LIVE_MODEL
             }
@@ -240,24 +240,22 @@ class GeminiLiveEngine(
         val finalModel = if (normalized.startsWith("models/")) normalized else "models/$normalized"
         lastAttemptedModel = finalModel
 
-        // 依實測：native-audio 支援 AUDIO + translationConfig，無需 inputAudioTranscription；transcribe-live 僅支援 TEXT
-        val isNativeAudio = finalModel.contains("native-audio", ignoreCase = true) || finalModel.contains("2.5-flash-native", ignoreCase = true)
+        // 依 Rate Limit 實測：live-translate 與 native-audio 皆需 AUDIO+translationConfig+thinking0；transcribe-live 僅 TEXT
         val isTranscribeLive = finalModel.contains("transcribe-live", ignoreCase = true)
+        val isNativeAudio = finalModel.contains("native-audio", ignoreCase = true) || finalModel.contains("2.5-flash-native", ignoreCase = true)
+        val isLiveTranslate = finalModel.contains("live-translate", ignoreCase = true)
 
         val responseModality = if (isTranscribeLive) "TEXT" else "AUDIO"
         val generationConfig = JSONObject().apply {
             put("responseModalities", JSONArray().apply { put(responseModality) })
-            // 實測：帶 inputAudioTranscription 會 1007 Unknown name，僅 native-audio 的 minimal 才成功
-            if (!isNativeAudio && !isTranscribeLive) {
+            if (!isNativeAudio && !isTranscribeLive && !isLiveTranslate) {
                 put("inputAudioTranscription", JSONObject())
                 put("outputAudioTranscription", JSONObject())
             }
-            // native-audio 經實測支援 translationConfig，並需關閉 thinking 以免 thought 外洩
-            if (isNativeAudio) {
+            if (isLiveTranslate || isNativeAudio) {
                 put("translationConfig", JSONObject().apply {
                     put("targetLanguageCode", activeTargetLangCode)
                 })
-                // 關閉思考痕跡，避免 modelTurn.text 以 thought:true 送出內部推理
                 put("thinkingConfig", JSONObject().apply {
                     put("thinkingBudget", 0)
                     put("includeThoughts", false)
