@@ -1,5 +1,8 @@
 # 隨身口譯 (Pocket Translator) — 支援手機關閉螢幕即時語音翻譯
 
+[![CI](https://github.com/rock903400-byte/pocket-translator/actions/workflows/build-apk.yml/badge.svg)](https://github.com/rock903400-byte/pocket-translator/actions/workflows/build-apk.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > 一款如同 **Google 翻譯即時語音對話 / 同聲傳譯** 的 Android 應用程式，並徹底解決了 Google 翻譯**「按下電源鍵鎖定或關閉螢幕後就自動中斷錄音與口譯」**的最大痛點！
 
 ---
