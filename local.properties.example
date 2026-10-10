@@ -1,6 +1,8 @@
-## 本機簽章設定（勿提交 local.properties）
-## 複製此檔為 local.properties 並填入真實密碼，或改用環境變數 POCKET_STORE_PASSWORD / POCKET_KEY_PASSWORD
-pocket.storePassword=pocket_translator_key_2026
+## 本機簽章設定（勿提交 local.properties，也勿把金鑰檔 *.jks 放進 git）
+## 複製此檔為 local.properties 並填入你自己的金鑰資訊，或改用環境變數
+## POCKET_STORE_PASSWORD / POCKET_KEY_ALIAS / POCKET_KEY_PASSWORD
+## 金鑰檔預設放在 <專案根目錄>/keystore/pocket_translator.jks；要換位置可設 pocket.storeFile（絕對路徑）或 POCKET_KEYSTORE_PATH
+pocket.storePassword=CHANGE_ME
 pocket.keyAlias=pocket_key
-pocket.keyPassword=pocket_translator_key_2026
-sdk.dir=C\:\\Users\\user\\AppData\\Local\\Android\\Sdk
+pocket.keyPassword=CHANGE_ME
+sdk.dir=/path/to/Android/Sdk
