@@ -9,9 +9,9 @@ android {
     namespace = "com.translator.pocket"
     compileSdk = 35
 
-    // 簽章密碼只從 local.properties 或環境變數讀取，絕不寫死在 git。
-    // 本地：local.properties（已備好）；CI：POCKET_* Secrets。
-    // 無密碼時 debug 改用預設 debug 簽章照樣可編，release 則保持未簽章並告警。
+    // 簽章金鑰檔與密碼都只存在本機或 CI Secrets，絕不放進 git（keystore/ 與 *.jks 已被 .gitignore）。
+    // 本地：local.properties；CI：POCKET_* Secrets，金鑰檔由 POCKET_KEYSTORE_BASE64 還原。
+    // 金鑰檔或密碼缺任一項時，debug 改用預設 debug 簽章照樣可編，release 則保持未簽章並告警。
     val localProps = Properties().apply {
         val f = file("${rootDir}/local.properties")
         if (f.exists()) f.inputStream().use { load(it) }
@@ -22,13 +22,18 @@ android {
         localProps.getProperty("pocket.keyAlias") ?: System.getenv("POCKET_KEY_ALIAS")
     val pocketKeyPassword: String? =
         localProps.getProperty("pocket.keyPassword") ?: System.getenv("POCKET_KEY_PASSWORD")
-    val hasReleaseSigning = !pocketStorePassword.isNullOrBlank() &&
+    val pocketStoreFile = file(
+        localProps.getProperty("pocket.storeFile")
+            ?: System.getenv("POCKET_KEYSTORE_PATH")
+            ?: "${rootDir}/keystore/pocket_translator.jks"
+    )
+    val hasReleaseSigning = pocketStoreFile.exists() && !pocketStorePassword.isNullOrBlank() &&
         !pocketKeyAlias.isNullOrBlank() && !pocketKeyPassword.isNullOrBlank()
 
     signingConfigs {
         if (hasReleaseSigning) {
             create("releaseSigning") {
-                storeFile = file("${rootDir}/keystore/pocket_translator.jks")
+                storeFile = pocketStoreFile
                 storePassword = pocketStorePassword
                 keyAlias = pocketKeyAlias
                 keyPassword = pocketKeyPassword

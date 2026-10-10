@@ -30,6 +30,18 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      - name: Restore signing keystore (only when the secret is set)
+        env:
+          KEYSTORE_B64: ${{ secrets.POCKET_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            mkdir -p keystore
+            echo "$KEYSTORE_B64" | base64 -d > keystore/pocket_translator.jks
+            echo "Signing keystore restored."
+          else
+            echo "POCKET_KEYSTORE_BASE64 not set; build falls back to the default debug signature."
+          fi
+
       - name: Run Unit Tests
         run: gradle test --stacktrace
         env:

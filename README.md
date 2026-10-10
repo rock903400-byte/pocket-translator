@@ -37,7 +37,7 @@
 本專案已整合 **GitHub Actions 自動編譯發布**：
 1. 進入最新發布頁面：[GitHub Releases 最新版本](https://github.com/rock903400-byte/pocket-translator/releases/latest)。
 2. 下載附件中的 **`PocketTranslator-Debug.apk`** 直接在手機上安裝即可！
-3. **支援一鍵直接覆蓋升級**：自 v1.2.1 起已配置專屬永久數位簽章，未來下載任何新版本均可直接點擊覆蓋升級，自動保留歷史設定與 API Key！
+3. **覆蓋升級需注意簽章**：舊的專屬簽章金鑰曾不慎公開，已停用並換新。從舊簽章版本升級到新簽章版本時，請先**解除安裝舊版**再安裝（設定與 API Key 需重新輸入）；之後同一簽章的新版本即可直接覆蓋升級。
 
 ### 方法二：本機自行編譯
 若本機已安裝 Android Studio 或 Java 17：
